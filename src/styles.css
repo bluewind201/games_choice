@@ -224,3 +224,7 @@ select { font: inherit; padding: 12px; border-radius: 12px; border: 1px solid va
 .tactic { display: flex; flex-direction: column; gap: 4px; }
 .tactic-tag { font-size: 12px; font-weight: 800; color: var(--muted); }
 .tactic.push .tactic-tag { color: #4f6dff; }
+.mission-text { font-size: 13px; font-weight: 700; color: var(--primary); line-height: 1.4; word-break: keep-all; }
+.legacy { margin-top: 6px; }
+.legacy summary { color: var(--muted); font-size: 13px; padding: 8px 0; cursor: pointer; }
+.legacy .stage-list { margin-top: 6px; }

@@ -15,7 +15,7 @@ import { MG_402 } from './minigames/mash';
 import { MG_602 } from './minigames/find';
 import type { MinigameDef, MgResult } from './minigames/types';
 import { shareCard } from './ui/share';
-import { MISSION_OFFWORK, MissionStage, MissionOption, clockText, missionResult, startPatience, patienceDelta } from './data/missions';
+import { MISSIONS, MissionStage, MissionOption, clockText, missionResult, startPatience, patienceDelta } from './data/missions';
 
 const MINIGAMES: Record<MinigameId, MinigameDef> = { MG_101, MG_402, MG_602 };
 const EMOTION_ICON: Record<Emotion, string> = { HAPPY: '😄', NORMAL: '🙂', PANIC: '😳', ANGRY: '😠', SUSPECT: '🤨', CRY: '😢' };
@@ -250,14 +250,17 @@ function screenMap() {
       </div>
       <div class="battery-line">🔋 사회적 배터리 <b>${save.battery}</b> / 100
         <button class="btn small" id="rest">하루 새로 시작</button></div>
-      <button class="mission-card" id="mission">
-        <div class="mission-badge">NEW · 미션 모드</div>
-        <div class="mission-row"><div class="stage-icon">${MISSION_OFFWORK.npcIcon}</div>
-        <div class="stage-info"><b>${esc(MISSION_OFFWORK.title)}</b><div class="muted">미션: ${esc(MISSION_OFFWORK.mission)}</div>
-        <div class="muted">상대를 읽고 내 목표를 이루는 버전 · 추리: MBTI +혈액형 +세대</div></div>
-        <div class="stage-grade g-${save.best[MISSION_OFFWORK.id] ?? 'none'}">${save.best[MISSION_OFFWORK.id] ?? ''}</div></div>
-      </button>
-      <div class="muted">기존 버전 (호감 올리기)</div>
+      <div class="stage-list">${MISSIONS.map((m, i) => {
+        const best = save.best[m.id];
+        const layers = ['MBTI', '+혈액형', '+세대'].slice(0, m.level).join(' ');
+        return `<button class="mission-card" data-m="${i}">
+          <div class="mission-row"><div class="stage-icon">${m.npcIcon}</div>
+          <div class="stage-info"><div class="muted">${esc(m.chapter)}</div><b>${esc(m.title)}</b>
+          <div class="mission-text">🎯 ${esc(m.mission)}</div>
+          <div class="muted">${esc(m.npcRole)} · 추리: ${layers}</div></div>
+          <div class="stage-grade g-${best ?? 'none'}">${best ?? ''}</div></div></button>`;
+      }).join('')}</div>
+      <details class="legacy"><summary>이전 버전 (호감 올리기) 보기</summary>
       <div class="stage-list">${STAGES.map((s, i) => {
         const best = save.best[s.id];
         const open = isUnlocked(i);
@@ -267,8 +270,8 @@ function screenMap() {
           <div class="stage-info"><div class="muted">${esc(s.chapter)}</div><b>${esc(s.title)}</b>
           <div class="muted">${esc(s.npcRole)} · 추리: ${layers}</div></div>
           <div class="stage-grade g-${best ?? 'none'}">${best ?? ''}</div></button>`;
-      }).join('')}</div>
-      <p class="fine">프로토타입: Ch.1~3 스테이지 3개. 배터리는 스테이지 사이에 이어지고, 끝날 때마다 ${BATTERY_REST_BETWEEN_STAGES}씩 회복돼요.</p>
+      }).join('')}</div></details>
+      <p class="fine">프로토타입: 미션 3개. 배터리는 스테이지 사이에 이어지고, 끝날 때마다 ${BATTERY_REST_BETWEEN_STAGES}씩 회복돼요.</p>
     </div>`);
   $('#persona').onclick = () => screenPersona();
   $('#rest').onclick = () => {
@@ -278,7 +281,7 @@ function screenMap() {
     screenMap();
   };
   app.querySelectorAll<HTMLButtonElement>('.stage-card').forEach((b) => (b.onclick = () => startStage(STAGES[+b.dataset.i!])));
-  $('#mission').onclick = () => startMission(MISSION_OFFWORK);
+  app.querySelectorAll<HTMLButtonElement>('.mission-card').forEach((b) => (b.onclick = () => startMission(MISSIONS[+b.dataset.m!])));
 }
 
 // ---------- 스테이지 진행 ----------
@@ -724,7 +727,7 @@ function startMission(m: MissionStage) {
     .join('');
   render(`
     <div class="screen intro" style="background:${m.bg}">
-      <div class="mission-badge">미션 모드</div>
+      <div class="muted">${esc(m.chapter)}</div>
       <h2>${esc(m.title)}</h2>
       <div class="npc-big">${m.npcIcon}</div>
       <div class="npc-name">${esc(m.npcName)} <span class="muted">${esc(m.npcRole)}</span></div>
@@ -736,9 +739,9 @@ function startMission(m: MissionStage) {
       <div class="compat-box">
         <div class="compat-title">첫인상 궁합 (상대 성향은 비밀!)</div>
         <table>${rows}</table>
-        <div class="compat-sum">시작 인내심 <b>${ms.patience}</b> · 인내심 감소 배율 <b>×${compat.batteryMult}</b></div>
+        <div class="compat-sum">시작 ${esc(m.patienceLabel)} <b>${ms.patience}</b> · 감소 배율 <b>×${compat.batteryMult}</b></div>
       </div>
-      <p class="fine">🙇 맞춰주기는 안전하지만 시간이 들고 미션이 안 나아가요. ⚡ 밀어붙이기는 빠르지만, 상대 성향에 안 맞는 방식이면 인내심이 크게 깎여요. 추리수첩🔍으로 상대를 읽고 어떤 방식으로 밀지 고르세요.</p>
+      <p class="fine">🙇 맞춰주기는 안전하지만 시간이 들고 미션이 안 나아가요. ⚡ 밀어붙이기는 빠르지만, 상대 성향에 안 맞는 방식이면 ${esc(m.patienceLabel)}이(가) 크게 깎여요. 추리수첩🔍으로 상대를 읽고 어떤 방식으로 밀지 고르세요.</p>
       <button class="btn primary" id="start">작전 시작</button>
     </div>`);
   $('#start').onclick = () => {
@@ -754,7 +757,7 @@ function missionShell() {
       <div class="mbars">
         <div class="clock"><span class="muted">퇴근까지</span><b id="clock"></b></div>
         <div class="bar"><span>🎯 미션</span><div class="track"><div class="fill progress" id="progFill"></div></div><b id="progNum"></b></div>
-        <div class="bar"><span>😤 인내심</span><div class="track"><div class="fill patience" id="patFill"></div></div><b id="patNum"></b></div>
+        <div class="bar"><span>😤 ${esc(m.patienceLabel.split(' ').pop()!)}</span><div class="track"><div class="fill patience" id="patFill"></div></div><b id="patNum"></b></div>
         <div class="bar"><span>🔋 배터리</span><div class="track"><div class="fill battery" id="batFill"></div></div><b id="batNum"></b></div>
         <button class="note-btn" id="note">🔍<span id="noteCount">0</span></button>
       </div>
@@ -813,7 +816,7 @@ async function playBeat(i: number) {
     s.progress += gain;
     if (res === 'fail') s.patience += patienceDelta(beat.minigame.failPatience, run.compat.batteryMult);
     updateMissionBars();
-    toast(res === 'fail' ? '실패… 팀장 인내심이 깎였다' : `${res === 'great' ? '대성공!' : '성공!'} 미션 +${gain}`, res === 'fail' ? 'bad' : 'good');
+    toast(res === 'fail' ? `실패… ${s.m.patienceLabel}이(가) 깎였다` : `${res === 'great' ? '대성공!' : '성공!'} 미션 +${gain}`, res === 'fail' ? 'bad' : 'good');
   } else if (beat.objection) {
     await missionObjection(beat.objection);
   } else if (beat.options) {
@@ -831,7 +834,7 @@ async function playBeat(i: number) {
     updateMissionBars();
     await say('me', opt.text);
     toast(
-      `${opt.approach} · 미션 ${opt.progress >= 0 ? '+' : ''}${opt.progress} · 인내심 ${pd >= 0 ? '+' : ''}${pd} · ${opt.minutes}분`,
+      `${opt.approach} · 미션 ${opt.progress >= 0 ? '+' : ''}${opt.progress} · ${s.m.patienceLabel.split(' ').pop()} ${pd >= 0 ? '+' : ''}${pd} · ${opt.minutes}분`,
       pd < 0 || opt.progress < 0 ? 'bad' : 'good',
     );
     await waitTap();
@@ -892,7 +895,7 @@ async function missionObjection(o: NonNullable<MissionStage['beats'][number]['ob
     s.patience += pd;
     updateMissionBars();
     await say('npc', o.failLine, 'ANGRY');
-    toast(`역공당했다! 인내심 ${pd}`, 'bad');
+    toast(`역공당했다! ${s.m.patienceLabel} ${pd}`, 'bad');
   }
 }
 
@@ -922,11 +925,11 @@ function finishMission() {
   render(`
     <div class="screen result" style="background:${m.bg}">
       <div class="stamp g-${grade}">${grade}</div>
-      <h2>${clear ? '미션 성공! 칼퇴!' : '미션 실패'}</h2>
+      <h2>${clear ? esc(m.clearTitle) : '미션 실패'}</h2>
       <p class="intro-text">${esc(ending)}</p>
       <div class="result-grid">
         <div><span>🎯 미션 진행도</span><b>${s.progress}</b></div>
-        <div><span>😤 남은 인내심</span><b>${s.patience}</b></div>
+        <div><span>😤 남은 ${esc(m.patienceLabel)}</span><b>${s.patience}</b></div>
         <div><span>⏰ 끝난 시각</span><b>${clockText(s.clock)}</b></div>
         <div><span>⚡ 통한 밀어붙이기</span><b>${s.pushHits} / ${s.pushTotal}</b></div>
       </div>
@@ -944,7 +947,7 @@ function finishMission() {
       grade,
       myLine: `${activeName()} (${activeProfile()!.mbti})`,
       npcLine: `${m.npcName} (${m.npc.mbti})`,
-      comment: clear ? `${m.npcRole}를 읽어내고 ${clockText(s.clock)}에 칼퇴 성공!` : `${m.mission}... 실패. 다음엔 꼭!`,
+      comment: clear ? m.shareClear : `${m.title}... 실패. 다음엔 꼭!`,
       batteryLeft: run.battery,
       accuracy: acc,
     });
