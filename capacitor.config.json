@@ -1,0 +1,6 @@
+{
+  "appId": "com.seontaek.choices",
+  "appName": "선택의 연속",
+  "webDir": "dist",
+  "android": { "allowMixedContent": false }
+}
