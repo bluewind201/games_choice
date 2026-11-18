@@ -15,6 +15,7 @@ import { MG_402 } from './minigames/mash';
 import { MG_602 } from './minigames/find';
 import type { MinigameDef, MgResult } from './minigames/types';
 import { shareCard } from './ui/share';
+import { MISSION_OFFWORK, MissionStage, MissionOption, clockText, missionResult, startPatience, patienceDelta } from './data/missions';
 
 const MINIGAMES: Record<MinigameId, MinigameDef> = { MG_101, MG_402, MG_602 };
 const EMOTION_ICON: Record<Emotion, string> = { HAPPY: '😄', NORMAL: '🙂', PANIC: '😳', ANGRY: '😠', SUSPECT: '🤨', CRY: '😢' };
@@ -249,6 +250,14 @@ function screenMap() {
       </div>
       <div class="battery-line">🔋 사회적 배터리 <b>${save.battery}</b> / 100
         <button class="btn small" id="rest">하루 새로 시작</button></div>
+      <button class="mission-card" id="mission">
+        <div class="mission-badge">NEW · 미션 모드</div>
+        <div class="mission-row"><div class="stage-icon">${MISSION_OFFWORK.npcIcon}</div>
+        <div class="stage-info"><b>${esc(MISSION_OFFWORK.title)}</b><div class="muted">미션: ${esc(MISSION_OFFWORK.mission)}</div>
+        <div class="muted">상대를 읽고 내 목표를 이루는 버전 · 추리: MBTI +혈액형 +세대</div></div>
+        <div class="stage-grade g-${save.best[MISSION_OFFWORK.id] ?? 'none'}">${save.best[MISSION_OFFWORK.id] ?? ''}</div></div>
+      </button>
+      <div class="muted">기존 버전 (호감 올리기)</div>
       <div class="stage-list">${STAGES.map((s, i) => {
         const best = save.best[s.id];
         const open = isUnlocked(i);
@@ -269,6 +278,7 @@ function screenMap() {
     screenMap();
   };
   app.querySelectorAll<HTMLButtonElement>('.stage-card').forEach((b) => (b.onclick = () => startStage(STAGES[+b.dataset.i!])));
+  $('#mission').onclick = () => startMission(MISSION_OFFWORK);
 }
 
 // ---------- 스테이지 진행 ----------
@@ -291,6 +301,7 @@ let run: Run;
 const LAYER_NAME: Record<string, string> = { MBTI: '성격유형', BLOOD: '혈액형', GEN: '세대', ZODIAC_KR: '띠', WEST: '별자리' };
 
 function startStage(stage: Stage) {
+  ms = null;
   const player = activeProfile()!;
   const compat = computeCompat(player, stage.npc, stage.level);
   if (save.battery <= 15) {
@@ -371,6 +382,7 @@ async function stageShell() {
 }
 
 function updateBars() {
+  if (ms) return updateMissionBars();
   run.favor = clamp(run.favor, 0, FAVOR_MAX);
   run.battery = clamp(run.battery, 0, 100);
   $('#favorFill').style.width = `${run.favor}%`;
@@ -681,6 +693,266 @@ function finishStage() {
   if (nb) nb.onclick = () => startStage(STAGES[next]);
   $('#retry').onclick = () => startStage(s);
   $('#map').onclick = () => screenMap();
+}
+
+// ---------- 미션 모드 ----------
+interface MissionState {
+  m: MissionStage;
+  progress: number;
+  patience: number;
+  clock: number;
+  pushHits: number;
+  pushTotal: number;
+}
+let ms: MissionState | null = null;
+
+const TACTIC_TAG: Record<string, string> = { yield: '🙇 맞춰주기', push: '⚡ 밀어붙이기' };
+
+function startMission(m: MissionStage) {
+  const player = activeProfile()!;
+  const compat = computeCompat(player, m.npc, m.level);
+  run = {
+    stage: m as unknown as Stage,
+    player, compat,
+    favor: 0,
+    battery: save.battery,
+    guesses: {}, hinted: [], observations: [], matchCount: 0, mgResults: [],
+  };
+  ms = { m, progress: 0, patience: startPatience(compat.initFavor), clock: m.startClock, pushHits: 0, pushTotal: 0 };
+  const rows = compat.layers
+    .map((l) => `<tr><td>${LAYER_NAME[l.layer]}</td><td>${esc(l.label)}</td><td class="${l.favor >= 0 ? 'pos' : 'neg'}">${l.favor >= 0 ? '+' : ''}${l.favor}</td></tr>`)
+    .join('');
+  render(`
+    <div class="screen intro" style="background:${m.bg}">
+      <div class="mission-badge">미션 모드</div>
+      <h2>${esc(m.title)}</h2>
+      <div class="npc-big">${m.npcIcon}</div>
+      <div class="npc-name">${esc(m.npcName)} <span class="muted">${esc(m.npcRole)}</span></div>
+      <p class="intro-text">${esc(m.intro)}</p>
+      <div class="compat-box mission-goal">
+        <div class="compat-title">🎯 미션: ${esc(m.mission)}</div>
+        <ul>${m.conditions.map((c) => `<li>${esc(c)}</li>`).join('')}</ul>
+      </div>
+      <div class="compat-box">
+        <div class="compat-title">첫인상 궁합 (상대 성향은 비밀!)</div>
+        <table>${rows}</table>
+        <div class="compat-sum">시작 인내심 <b>${ms.patience}</b> · 인내심 감소 배율 <b>×${compat.batteryMult}</b></div>
+      </div>
+      <p class="fine">🙇 맞춰주기는 안전하지만 시간이 들고 미션이 안 나아가요. ⚡ 밀어붙이기는 빠르지만, 상대 성향에 안 맞는 방식이면 인내심이 크게 깎여요. 추리수첩🔍으로 상대를 읽고 어떤 방식으로 밀지 고르세요.</p>
+      <button class="btn primary" id="start">작전 시작</button>
+    </div>`);
+  $('#start').onclick = () => {
+    missionShell();
+    playBeat(0);
+  };
+}
+
+function missionShell() {
+  const m = ms!.m;
+  render(`
+    <div class="stage" style="background:${m.bg}">
+      <div class="mbars">
+        <div class="clock"><span class="muted">퇴근까지</span><b id="clock"></b></div>
+        <div class="bar"><span>🎯 미션</span><div class="track"><div class="fill progress" id="progFill"></div></div><b id="progNum"></b></div>
+        <div class="bar"><span>😤 인내심</span><div class="track"><div class="fill patience" id="patFill"></div></div><b id="patNum"></b></div>
+        <div class="bar"><span>🔋 배터리</span><div class="track"><div class="fill battery" id="batFill"></div></div><b id="batNum"></b></div>
+        <button class="note-btn" id="note">🔍<span id="noteCount">0</span></button>
+      </div>
+      <div class="place muted">🎯 ${esc(m.mission)}</div>
+      <div class="npc">
+        <div class="npc-portrait">${m.npcIcon}<span class="emo" id="emo">🙂</span></div>
+        <div class="npc-name">${esc(m.npcName)} <span class="muted">${esc(m.npcRole)}</span></div>
+      </div>
+      <div class="dialog"><div class="speaker" id="speaker"></div><div class="text" id="dtext"></div></div>
+      <div class="choices" id="choices"></div>
+    </div>`);
+  $('#note').onclick = () => openNotebook();
+  updateMissionBars();
+}
+
+function updateMissionBars() {
+  const s = ms!;
+  s.progress = clamp(s.progress, 0, 100);
+  s.patience = clamp(s.patience, 0, 100);
+  run.battery = clamp(run.battery, 0, 100);
+  const left = s.m.deadline - s.clock;
+  $('#clock').textContent = `${clockText(s.clock)} (${left >= 0 ? `${left}분 남음` : '초과!'})`;
+  $('#clock').classList.toggle('danger', left <= 15);
+  $('#progFill').style.width = `${s.progress}%`;
+  $('#progNum').textContent = String(s.progress);
+  $('#patFill').style.width = `${s.patience}%`;
+  $('#patFill').classList.toggle('low', s.patience <= 30);
+  $('#patNum').textContent = String(s.patience);
+  $('#batFill').style.width = `${run.battery}%`;
+  $('#batFill').classList.toggle('low', run.battery <= 25);
+  $('#batNum').textContent = String(run.battery);
+  $('#noteCount').textContent = String(run.observations.length);
+}
+
+function missionOver(): boolean {
+  const s = ms!;
+  return s.patience <= 0 || s.clock > s.m.deadline;
+}
+
+async function playBeat(i: number) {
+  const s = ms!;
+  const beat = s.m.beats[i];
+  if (!beat || missionOver()) return finishMission();
+  await say('npc', beat.line, beat.emotion);
+  beat.observations.forEach((o) => run.observations.push(o));
+  updateMissionBars();
+  $('#note').classList.add('pulse');
+  setTimeout(() => $('#note')?.classList.remove('pulse'), 1200);
+  toast(`🔍 관찰 ${beat.observations.length}개를 추리수첩에 적었다`, 'info');
+
+  if (beat.minigame) {
+    await waitTap('🚨 위기 발생! 미니게임 시작');
+    const res = await playMinigame(beat.minigame.id);
+    s.clock += beat.minigame.minutes;
+    const gain = beat.minigame.progress[res];
+    s.progress += gain;
+    if (res === 'fail') s.patience += patienceDelta(beat.minigame.failPatience, run.compat.batteryMult);
+    updateMissionBars();
+    toast(res === 'fail' ? '실패… 팀장 인내심이 깎였다' : `${res === 'great' ? '대성공!' : '성공!'} 미션 +${gain}`, res === 'fail' ? 'bad' : 'good');
+  } else if (beat.objection) {
+    await missionObjection(beat.objection);
+  } else if (beat.options) {
+    const opt = await pickTactic(beat.options);
+    const pd = patienceDelta(opt.patience, run.compat.batteryMult);
+    const bd = batteryDelta(opt.tactic === 'yield' ? 'mask' : 'match', run.compat.batteryMult);
+    s.progress += opt.progress;
+    s.patience += pd;
+    s.clock += opt.minutes;
+    run.battery += bd;
+    if (opt.tactic === 'push') {
+      s.pushTotal++;
+      if (opt.patience >= 0) s.pushHits++;
+    }
+    updateMissionBars();
+    await say('me', opt.text);
+    toast(
+      `${opt.approach} · 미션 ${opt.progress >= 0 ? '+' : ''}${opt.progress} · 인내심 ${pd >= 0 ? '+' : ''}${pd} · ${opt.minutes}분`,
+      pd < 0 || opt.progress < 0 ? 'bad' : 'good',
+    );
+    await waitTap();
+    await say('npc', opt.reaction, opt.emotion);
+  }
+  if (run.battery <= 0 && !(await burnout())) return finishMission();
+  await waitTap(missionOver() ? '결과 보기' : '▶ 계속');
+  playBeat(i + 1);
+}
+
+function pickTactic(options: MissionOption[]): Promise<MissionOption> {
+  const shuffled = [...options].sort(() => Math.random() - 0.5);
+  return new Promise((resolve) => {
+    $('#choices').innerHTML = shuffled
+      .map((o, i) => `<button class="btn choice tactic ${o.tactic}" data-i="${i}"><span class="tactic-tag">${TACTIC_TAG[o.tactic]} · ${esc(o.approach)} · ⏱${o.minutes}분</span>${esc(o.text)}</button>`)
+      .join('');
+    app.querySelectorAll<HTMLButtonElement>('#choices .choice').forEach((b) =>
+      (b.onclick = () => {
+        $('#choices').innerHTML = '';
+        resolve(shuffled[+b.dataset.i!]);
+      }),
+    );
+  });
+}
+
+async function missionObjection(o: NonNullable<MissionStage['beats'][number]['objection']>) {
+  const s = ms!;
+  await new Promise<void>((resolve) => {
+    $('#choices').innerHTML = `<button class="btn" id="nb">🔍 추리수첩 다시 보기</button><button class="btn primary objection-btn" id="obj">${esc(o.shout)} 결정적 한마디</button>`;
+    $('#nb').onclick = () => openNotebook();
+    $('#obj').onclick = () => resolve();
+  });
+  const chosen = await new Promise<string>((resolve) => {
+    const m = modal(`<h3>무엇을 제시할까?</h3><div class="evidence">${o.evidence
+      .map((e) => `<button class="ev" data-id="${e.id}"><span class="ev-icon">${e.icon}</span><b>${esc(e.name)}</b><span class="muted">${esc(e.desc)}</span></button>`)
+      .join('')}</div>`);
+    m.querySelectorAll<HTMLButtonElement>('.ev').forEach((b) =>
+      (b.onclick = () => {
+        m.remove();
+        resolve(b.dataset.id!);
+      }),
+    );
+  });
+  $('#choices').innerHTML = '';
+  await cutIn(o.shout);
+  s.clock += o.minutes;
+  const acc = accuracy(s.m.npc, DIMS_BY_LEVEL[s.m.level - 1], run.guesses);
+  if (chosen === o.correctId) {
+    const gain = Math.round(o.progressBase + o.progressAccuracy * acc);
+    s.progress += gain;
+    updateMissionBars();
+    await say('me', o.playerLine);
+    await waitTap();
+    await say('npc', o.successLine, 'HAPPY');
+    toast(`결정적 한마디 성공! 미션 +${gain} (추리 정확도 ${Math.round(acc * 100)}%)`, 'good');
+  } else {
+    const pd = patienceDelta(o.failPatience, run.compat.batteryMult);
+    s.patience += pd;
+    updateMissionBars();
+    await say('npc', o.failLine, 'ANGRY');
+    toast(`역공당했다! 인내심 ${pd}`, 'bad');
+  }
+}
+
+function finishMission() {
+  const s = ms!;
+  const m = s.m;
+  s.progress = clamp(s.progress, 0, 100);
+  s.patience = clamp(s.patience, 0, 100);
+  const { grade, fail } = run.battery <= 0 ? { grade: 'F' as const, fail: 'progress' as const } : missionResult(s.progress, s.patience, s.clock, m.deadline);
+  const prev = save.best[m.id];
+  const rank = { S: 4, A: 3, B: 2, F: 1 } as const;
+  if (!prev || rank[grade] > rank[prev]) save.best[m.id] = grade;
+  save.battery = clamp(run.battery + BATTERY_REST_BETWEEN_STAGES, 0, 100);
+  persist();
+  const ending = fail === 'patience' ? m.endings.F_patience : fail === 'time' ? m.endings.F_time : fail === 'progress' ? m.endings.F_progress : m.endings[grade as 'S' | 'A' | 'B'];
+  const dims = DIMS_BY_LEVEL[m.level - 1];
+  const acc = accuracy(m.npc, dims, run.guesses);
+  const reveal = dims
+    .map((k) => {
+      const ans = answerOf(m.npc, k);
+      const label = DIM_DEFS[k].options.find((o) => o.value === ans)!.label;
+      const ok = run.guesses[k] === ans;
+      return `<span class="${ok ? 'ok' : 'ng'}">${ok ? '✔' : '✘'} ${label}</span>`;
+    })
+    .join('');
+  const clear = grade !== 'F';
+  render(`
+    <div class="screen result" style="background:${m.bg}">
+      <div class="stamp g-${grade}">${grade}</div>
+      <h2>${clear ? '미션 성공! 칼퇴!' : '미션 실패'}</h2>
+      <p class="intro-text">${esc(ending)}</p>
+      <div class="result-grid">
+        <div><span>🎯 미션 진행도</span><b>${s.progress}</b></div>
+        <div><span>😤 남은 인내심</span><b>${s.patience}</b></div>
+        <div><span>⏰ 끝난 시각</span><b>${clockText(s.clock)}</b></div>
+        <div><span>⚡ 통한 밀어붙이기</span><b>${s.pushHits} / ${s.pushTotal}</b></div>
+      </div>
+      <div class="reveal"><div class="muted">${esc(m.npcName)}의 정체 · 추리 정확도 ${Math.round(acc * 100)}%</div><div class="reveal-tags">${reveal}</div>
+        <div class="muted small">${esc(describe(m.npc))}</div></div>
+      <div class="stack">
+        <button class="btn" id="share">📸 결과 카드 공유</button>
+        <button class="btn ${clear ? '' : 'primary'}" id="retry">다시 도전</button>
+        <button class="btn ${clear ? 'primary' : ''}" id="map">스테이지 목록</button>
+      </div>
+    </div>`);
+  $('#share').onclick = () =>
+    shareCard({
+      title: m.title,
+      grade,
+      myLine: `${activeName()} (${activeProfile()!.mbti})`,
+      npcLine: `${m.npcName} (${m.npc.mbti})`,
+      comment: clear ? `${m.npcRole}를 읽어내고 ${clockText(s.clock)}에 칼퇴 성공!` : `${m.mission}... 실패. 다음엔 꼭!`,
+      batteryLeft: run.battery,
+      accuracy: acc,
+    });
+  $('#retry').onclick = () => startMission(m);
+  $('#map').onclick = () => {
+    ms = null;
+    screenMap();
+  };
 }
 
 screenTitle();
