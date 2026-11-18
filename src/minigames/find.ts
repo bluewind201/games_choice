@@ -19,7 +19,7 @@ export const MG_602: MinigameDef = {
   id: 'MG_602',
   title: '갑자기 조용해진 진짜 이유 찾기',
   howTo: '상대가 "괜찮아요"라고 한 진짜 이유를 찾아 터치한 뒤 [제시!]를 누르세요. 말풍선을 믿으면 안 돼요!',
-  timeSec: 10,
+  timeSec: 15,
   run(ctx: MgContext): Promise<MgResult> {
     const TIME = this.timeSec;
     const ui = hud(ctx.root, this.title);
@@ -46,14 +46,22 @@ export const MG_602: MinigameDef = {
       const finish = (r: MgResult) => {
         if (done) return;
         done = true;
-        resolve(r);
+        present.disabled = true;
+        // 실패했을 때는 정답을 잠깐 보여 줘서 왜 틀렸는지 알 수 있게 한다
+        ui.play.querySelectorAll<HTMLElement>('.find-spot').forEach((x) => {
+          const sp = SPOTS.find((q) => q.id === x.dataset.id)!;
+          if (sp.correct) x.classList.add('answer');
+          else if (x.dataset.id === selected && r === 'fail') x.classList.add('wrong');
+        });
+        if (r === 'fail') ui.goal.textContent = selected ? '정답은 휴대폰 화면!' : '시간 초과! 정답은 휴대폰 화면';
+        setTimeout(() => resolve(r), r === 'fail' ? 1600 : 500);
       };
       present.addEventListener('click', () => {
         const spot = SPOTS.find((s) => s.id === selected);
         const elapsed = (performance.now() - start) / 1000;
         if (spot?.correct) {
           vibrate(250);
-          finish(elapsed <= 5 ? 'great' : 'normal');
+          finish(elapsed <= 7 ? 'great' : 'normal');
         } else {
           vibrate(150);
           finish('fail');

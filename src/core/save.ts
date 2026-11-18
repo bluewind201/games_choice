@@ -2,6 +2,7 @@
 // 안드로이드 자동 백업으로 기기 변경 시 복원할 수 있다.
 import type { Profile } from './profile';
 import type { Grade } from './rules';
+import type { WorldSave } from '../world/world';
 
 export interface SaveData {
   version: 1;
@@ -9,6 +10,8 @@ export interface SaveData {
   personaId?: string; // 'REAL' 또는 PERSONAS id
   best: Record<string, Grade>;
   battery: number;
+  /** 3D 동네 진행 상황 */
+  world?: WorldSave;
 }
 
 const KEY = 'seontaek.save.v1';

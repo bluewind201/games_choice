@@ -15,6 +15,7 @@ import { MG_402 } from './minigames/mash';
 import { MG_602 } from './minigames/find';
 import type { MinigameDef, MgResult } from './minigames/types';
 import { shareCard } from './ui/share';
+import { World, newWorldSave } from './world/world';
 import { MISSIONS, MissionStage, MissionOption, clockText, missionResult, startPatience, patienceDelta } from './data/missions';
 
 const MINIGAMES: Record<MinigameId, MinigameDef> = { MG_101, MG_402, MG_602 };
@@ -35,6 +36,55 @@ function render(html: string) {
 
 function persist() {
   writeSave(save);
+}
+
+// ---------- 3D 동네 ----------
+let world: World | null = null;
+let missionDone: ((grade: Grade) => void) | null = null;
+let lastMissionGrade: Grade = 'F';
+
+function enterWorld() {
+  if (!activeProfile()) return screenBirth();
+  save.world ??= newWorldSave();
+  persist();
+  app.innerHTML = '';
+  app.hidden = true;
+  const host = document.getElementById('world') as HTMLElement;
+  world ??= new World(host, {
+    save: () => (save.world ??= newWorldSave()),
+    battery: () => save.battery,
+    setBattery: (v) => {
+      save.battery = clamp(Math.round(v), 0, 100);
+      persist();
+    },
+    persist,
+    startMission: (id, done) => {
+      const m = MISSIONS.find((x) => x.id === id);
+      if (!m) return done('F');
+      app.hidden = false;
+      missionDone = done;
+      lastMissionGrade = 'F';
+      startMission(m);
+    },
+    playerName: () => activeName(),
+    openMenu: () => {
+      app.hidden = false;
+      screenPersona();
+    },
+  });
+  world.start();
+}
+
+/** 미션 결과 화면에서 동네로 돌아갈 때 */
+function backToWorld() {
+  const done = missionDone;
+  missionDone = null;
+  ms = null;
+  if (done) {
+    app.innerHTML = '';
+    app.hidden = true;
+    done(lastMissionGrade);
+  } else enterWorld();
 }
 
 function activeProfile(): Profile | undefined {
@@ -116,7 +166,7 @@ function screenTitle() {
     }
     screenBirth();
   };
-  if (has) $('#continue').onclick = () => screenMap();
+  if (has) $('#continue').onclick = () => enterWorld();
 }
 
 // ---------- 온보딩: 생년월일·혈액형 ----------
@@ -202,7 +252,7 @@ function screenMyCard() {
   $('#go').onclick = () => {
     save.personaId = 'REAL';
     persist();
-    screenMap();
+    enterWorld();
   };
   $('#persona').onclick = () => screenPersona();
 }
@@ -226,10 +276,10 @@ function screenPersona() {
       save.personaId = b.dataset.id;
       persist();
       toast(`${options.find((o) => o.id === b.dataset.id)!.name} 장착!`, 'good');
-      screenMap();
+      enterWorld();
     }),
   );
-  $('#back').onclick = () => screenMap();
+  $('#back').onclick = () => enterWorld();
 }
 
 // ---------- 스테이지 지도 ----------
@@ -908,6 +958,7 @@ function finishMission() {
   const prev = save.best[m.id];
   const rank = { S: 4, A: 3, B: 2, F: 1 } as const;
   if (!prev || rank[grade] > rank[prev]) save.best[m.id] = grade;
+  if (missionDone && rank[grade] > rank[lastMissionGrade]) lastMissionGrade = grade;
   save.battery = clamp(run.battery + BATTERY_REST_BETWEEN_STAGES, 0, 100);
   persist();
   const ending = fail === 'patience' ? m.endings.F_patience : fail === 'time' ? m.endings.F_time : fail === 'progress' ? m.endings.F_progress : m.endings[grade as 'S' | 'A' | 'B'];
@@ -938,7 +989,7 @@ function finishMission() {
       <div class="stack">
         <button class="btn" id="share">📸 결과 카드 공유</button>
         <button class="btn ${clear ? '' : 'primary'}" id="retry">다시 도전</button>
-        <button class="btn ${clear ? 'primary' : ''}" id="map">스테이지 목록</button>
+        <button class="btn ${clear ? 'primary' : ''}" id="map">${missionDone ? '🏘️ 동네로 돌아가기' : '스테이지 목록'}</button>
       </div>
     </div>`);
   $('#share').onclick = () =>
@@ -953,6 +1004,7 @@ function finishMission() {
     });
   $('#retry').onclick = () => startMission(m);
   $('#map').onclick = () => {
+    if (missionDone) return backToWorld();
     ms = null;
     screenMap();
   };
