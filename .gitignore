@@ -5,3 +5,4 @@ android/
 .DS_Store
 build/
 godot/.godot/
+*.whl
