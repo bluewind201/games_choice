@@ -6,6 +6,8 @@ import {
 } from './data';
 import { U, ax, MAP_PX, Rect, TREES, LAMPS, renderMap, buildColliders, placeRect, doorSide } from './map';
 import { esc, toast, modal, won } from '../ui/common';
+import { TalkOverlay, sfx } from '../ui/dialogue';
+import type { Emotion } from '../data/stages';
 
 export interface WorldSave {
   day: number;
@@ -34,6 +36,7 @@ export interface WorldHooks {
   startMission: (missionId: string, done: (grade: string) => void) => void;
   playerName: () => string;
   openMenu: () => void;
+  playMinigame: (id: string) => Promise<'great' | 'normal' | 'fail'>;
 }
 
 /** 미션 시작 시각 (이 시각이 지나면 오늘은 못 함) */
@@ -57,6 +60,7 @@ interface Npc {
 
 interface Interactable {
   label: string;
+  marker?: string;
   x: number;
   z: number;
   action: () => void;
@@ -110,6 +114,7 @@ export class World {
     [this.px, this.pz] = this.free(s.pos[0], s.pos[1]);
     this.buildNpcs();
     this.buildPickups();
+    this.buildActivities();
     this.hud = document.createElement('div');
     this.hud.className = 'world-hud';
     host.appendChild(this.hud);
@@ -172,6 +177,42 @@ export class World {
         this.refreshHud();
       },
     });
+  }
+
+  /** 동네 활동: 미니게임으로 돈·경험치를 번다 (하루 한 번씩) */
+  private buildActivities() {
+    const ACTS: { id: string; label: string; x: number; z: number; mg: string; from: number; to: number; minutes: number; battery: number;
+      need?: string; reward: Record<'great' | 'normal' | 'fail', [number, number]>; title: string }[] = [
+      { id: 'cafe', label: '☕ 카페 알바 (주문 기억하기)', x: 8, z: -25.6, mg: 'MG_702', from: 10 * 60, to: 16 * 60, minutes: 60, battery: -10,
+        reward: { great: [9000, 30], normal: [6000, 20], fail: [1000, 5] }, title: '☕ 카페 알바' },
+      { id: 'meeting', label: '📊 오전 회의 (말 끊기 타이밍)', x: 30, z: -15.6, mg: 'MG_701', from: 9 * 60, to: 12 * 60, minutes: 60, battery: -8, need: 'commute',
+        reward: { great: [5000, 35], normal: [3000, 25], fail: [0, 10] }, title: '📊 오전 회의' },
+      { id: 'bench', label: '🪑 벤치에서 사람 구경 (표정 읽기)', x: -28.5, z: -11.8, mg: 'MG_703', from: 8 * 60, to: 21 * 60, minutes: 30, battery: 10,
+        reward: { great: [0, 40], normal: [0, 25], fail: [0, 10] }, title: '🪑 사람 구경' },
+    ];
+    for (const a of ACTS) {
+      this.interactables.push({
+        label: a.label,
+        marker: a.label.split(' ')[0],
+        x: a.x,
+        z: a.z,
+        visible: () => {
+          const s = this.hooks.save();
+          return !s.dayFlags.includes(`job:${a.id}`) && s.clock >= a.from && s.clock <= a.to && (!a.need || s.dayFlags.includes(a.need));
+        },
+        action: async () => {
+          const s = this.hooks.save();
+          s.dayFlags.push(`job:${a.id}`);
+          this.stop();
+          const res = await this.hooks.playMinigame(a.mg);
+          this.start();
+          s.clock += a.minutes;
+          this.hooks.setBattery(Math.max(0, Math.min(100, this.hooks.battery() + a.battery)));
+          const [money, xp] = a.reward[res];
+          this.reward(money, xp, `${a.title} ${res === 'great' ? '대성공!' : res === 'normal' ? '성공!' : '아쉽다…'}`);
+        },
+      });
+    }
   }
 
   private walletVisible() {
@@ -250,7 +291,7 @@ export class World {
   private bindInput() {
     window.addEventListener('keydown', (e) => {
       this.keys.add(e.key.toLowerCase());
-      if ((e.key === ' ' || e.key === 'e') && this.current && !this.paused && this.running && !document.querySelector('.modal')) this.current.action();
+      if ((e.key === ' ' || e.key === 'e') && this.current && !this.paused && this.running && !document.querySelector('.modal, .talk-overlay')) this.current.action();
       if (e.key === 'm' && this.running && !this.paused) this.openMap();
     });
     window.addEventListener('keyup', (e) => this.keys.delete(e.key.toLowerCase()));
@@ -519,6 +560,11 @@ export class World {
         this.label(n.def.kind === 'shop' ? '🛒' : n.def.kind === 'mission' ? '🎯' : '❗', sx, head - 24 + bob, '#23194a', '#ffd166', 14);
       }
     }
+    for (const it of this.interactables) {
+      if (!it.marker || !it.visible()) continue;
+      const [sx, sy] = toScreen(it.x, it.z);
+      this.label(`${it.marker}🎮`, sx, sy - 6 + Math.sin(this.t * 4 + it.x) * 3, '#23194a', '#8ef0c4', 13);
+    }
     const [hx, hy] = toScreen(BED_POS[0], BED_POS[1]);
     if (s.clock >= 21 * 60) this.label('🛏️ 여기서 자기', hx, hy - 10 + Math.sin(this.t * 4) * 3, '#23194a', '#ffd166', 12);
     this.drawGoalArrow(toScreen);
@@ -683,7 +729,7 @@ export class World {
     this.pause(true);
     const m = modal(`<h3>🗺️ 동네 지도</h3>
       <div class="bigmap"><canvas id="bigmap"></canvas></div>
-      <div class="map-legend"><span><i style="background:#4f6dff"></i>나</span><span><i style="background:#ff4f6d"></i>지금 목표</span><span>🎯 미션</span><span>❗ 퀘스트</span><span>🛒 상점</span><span>🛏️ 잠자는 곳</span></div>
+      <div class="map-legend"><span><i style="background:#4f6dff"></i>나</span><span><i style="background:#ff4f6d"></i>지금 목표</span><span>🎯 미션</span><span>❗ 퀘스트</span><span>🛒 상점</span><span>🎮 동네 활동</span><span>🛏️ 잠자는 곳</span></div>
       <button class="btn primary" id="ok">닫기</button>`);
     const cv = m.querySelector('#bigmap') as HTMLCanvasElement;
     const css = Math.min(440, window.innerWidth - 32);
@@ -725,6 +771,11 @@ export class World {
       const icon = n.kind === 'shop' ? '🛒' : n.kind === 'mission' ? '🎯' : '❗';
       const extra = n.missionId ? ` ${clockText(MISSION_TIME[n.missionId])}` : '';
       tag(`${icon}${extra}`, x, y + 16, '#ffd166', '#23194a', 11);
+    }
+    for (const it of this.interactables) {
+      if (!it.marker || !it.visible()) continue;
+      const [x, y] = P(it.x, it.z);
+      tag(`${it.marker}🎮`, x, y + 14, '#8ef0c4', '#23194a', 11);
     }
     const [bx, by] = P(BED_POS[0], BED_POS[1]);
     tag('🛏️', bx - 18, by, '#ffd166', '#23194a', 11);
@@ -795,32 +846,29 @@ export class World {
       if (s.flags.includes('wallet:have')) {
         s.flags = s.flags.filter((f) => f !== 'wallet:have');
         s.flags.push('wallet:done');
-        this.dialog(def.name, '어머나, 내 지갑! 손주 사진이 들어 있어서 얼마나 찾았는데... 고마워요, 이거 받아요.', () =>
-          this.reward(10000, 30, '👛 지갑을 찾아 드렸다!'),
-        );
+        this.dialog(def.name, '어머나, 내 지갑! 손주 사진이 들어 있어서 얼마나 찾았는데... 고마워요, 이거 받아요!', () =>
+          this.reward(10000, 30, '👛 지갑을 찾아 드렸다!'), this.lookOf(def.id), 'CRY');
       } else if (s.flags.includes('wallet:done')) {
-        this.dialog(def.name, '오늘도 출근하나 봐요? 밥 잘 챙겨 먹고 다녀요~');
+        this.dialog(def.name, '오늘도 출근하나 봐요? 밥 잘 챙겨 먹고 다녀요~', undefined, this.lookOf(def.id), 'HAPPY');
       } else {
-        this.dialog(def.name, '아이고, 어제 공원 산책하다가 지갑을 잃어버렸지 뭐야... 혹시 보면 좀 알려줘요.');
+        this.dialog(def.name, '아이고, 어제 공원 산책하다가 지갑을 잃어버렸지 뭐야... 혹시 보면 좀 알려줘요.', undefined, this.lookOf(def.id), 'PANIC');
       }
       return;
     }
     if (def.missionId) {
       const id = def.missionId;
-      if (s.dayFlags.includes(`mission:${id}`)) return this.dialog(def.name, '오늘은 이미 이야기 나눴잖아요. 내일 또 봐요!');
+      if (s.dayFlags.includes(`mission:${id}`)) return this.dialog(def.name, '오늘은 이미 이야기 나눴잖아요. 내일 또 봐요!', undefined, this.lookOf(def.id), 'HAPPY');
       const at = MISSION_TIME[id];
-      if (s.clock > at) return this.dialog(def.name, `(${clockText(at)}가 이미 지났다. ${MISSION_NAME[id]}은(는) 내일 다시 할 수 있다.)`);
-      const m = modal(`<h3>🎯 ${esc(MISSION_NAME[id])}</h3>
-        <p>${clockText(at)}에 시작하는 메인 미션이에요. 지금 시작하면 시간이 ${clockText(at)}로 넘어가요.</p>
-        <p class="muted">지금 시각 ${clockText(s.clock)} · 배터리 ${this.hooks.battery()}</p>
-        <div class="stack"><button class="btn primary" id="go">미션 시작</button><button class="btn" id="no">나중에</button></div>`);
-      this.pause(true);
-      (m.querySelector('#no') as HTMLButtonElement).onclick = () => {
-        m.remove();
-        this.pause(false);
+      if (s.clock > at) return this.dialog(def.name, `(${clockText(at)}가 이미 지났다. ${MISSION_NAME[id]}은(는) 내일 다시 할 수 있다.)`, undefined, this.lookOf(def.id), 'SUSPECT');
+      const GREET: Record<string, [string, Emotion]> = {
+        MS_301: ['이 대리, 퇴근 전에 잠깐 나 좀 보지. 할 얘기가 좀 많아.', 'SUSPECT'],
+        MS_201: ['아, 안녕하세요! 혹시... 오늘 소개팅 상대분 맞으시죠?', 'HAPPY'],
+        MS_101: ['어? 오늘 처음 오신 분이죠! 저희 크루 뒤풀이 엄청 재밌어요!', 'HAPPY'],
       };
-      (m.querySelector('#go') as HTMLButtonElement).onclick = () => {
-        m.remove();
+      const [greet, emo] = GREET[id] ?? ['잠깐 얘기 좀 할까요?', 'NORMAL'];
+      this.pause(true);
+      const t = new TalkOverlay(`🎯 ${MISSION_NAME[id]} · ${clockText(at)}`);
+      const go = () => {
         s.clock = at;
         s.dayFlags.push(`mission:${id}`);
         this.hooks.persist();
@@ -833,17 +881,33 @@ export class World {
           this.reward(r.money, r.xp, `🎯 ${MISSION_NAME[id]} ${grade}등급!`);
         });
       };
+      void (async () => {
+        await t.say({ name: def.name, look: this.lookOf(def.id), emotion: emo, text: greet });
+        const pick = await t.choose([`🎯 미션 시작 (시간이 ${clockText(at)}로 넘어가요)`, '나중에 다시 오기']);
+        t.close();
+        if (pick === 1) return this.pause(false);
+        go();
+      })();
     }
   }
 
-  private dialog(name: string, line: string, after?: () => void) {
+  /** 초상화와 함께 한 글자씩 나오는 짧은 대화 */
+  private dialog(name: string, line: string, after?: () => void, look?: Look, emotion: Emotion = 'NORMAL') {
     this.pause(true);
-    const m = modal(`<div class="speaker">${esc(name)}</div><p class="dlg">${esc(line)}</p><button class="btn primary" id="ok">확인</button>`);
-    (m.querySelector('#ok') as HTMLButtonElement).onclick = () => {
-      m.remove();
+    const me = name === '나';
+    const t = new TalkOverlay();
+    void (async () => {
+      await t.say({ name, look: look ?? this.hooks.save().look, emotion, text: line, me });
+      await t.waitTap('확인');
+      t.close();
       this.pause(false);
       after?.();
-    };
+    })();
+  }
+
+  private lookOf(npcId: string): Look {
+    const n = NPCS.find((x) => x.id === npcId);
+    return { ...DEFAULT_LOOK, ...(n?.look ?? {}) };
   }
 
   private encounter(npcId: string) {
@@ -852,20 +916,24 @@ export class World {
     s.dayFlags.push(`enc:${npcId}`);
     if (!e) return;
     this.pause(true);
+    sfx.stamp();
+    const def = NPCS.find((x) => x.id === npcId)!;
+    const look = this.lookOf(npcId);
     const shuffled = [...e.choices].sort(() => Math.random() - 0.5);
-    const m = modal(`<div class="enc-title">💥 ${esc(e.title)}</div><p class="dlg">${esc(e.line)}</p>
-      <div class="stack">${shuffled.map((c, i) => `<button class="btn choice" data-i="${i}">${esc(c.text)}</button>`).join('')}</div>`);
-    m.querySelectorAll<HTMLButtonElement>('.choice').forEach((b) =>
-      (b.onclick = () => {
-        const c = shuffled[+b.dataset.i!];
-        m.remove();
-        this.hooks.setBattery(Math.max(0, Math.min(100, this.hooks.battery() + c.battery)));
-        this.dialog(NPCS.find((x) => x.id === npcId)?.name ?? e.title, c.reaction, () => {
-          if (c.xp || c.money) this.reward(c.money, c.xp, '💥 돌발 만남 해결!');
-          else this.refreshHud();
-        });
-      }),
-    );
+    const t = new TalkOverlay(`💥 ${e.title}`);
+    void (async () => {
+      await t.say({ name: def.name, look, emotion: e.emotion, text: e.line });
+      const c = shuffled[await t.choose(shuffled.map((x) => x.text))];
+      await t.say({ name: '나', look: s.look, emotion: 'NORMAL', text: c.text, me: true });
+      await t.waitTap();
+      await t.say({ name: def.name, look, emotion: c.emotion, text: c.reaction });
+      await t.waitTap('확인');
+      t.close();
+      this.pause(false);
+      this.hooks.setBattery(Math.max(0, Math.min(100, this.hooks.battery() + c.battery)));
+      if (c.xp || c.money) this.reward(c.money, c.xp, '💥 돌발 만남 해결!');
+      else this.refreshHud();
+    })();
   }
 
   private petCat(i: number) {
@@ -935,6 +1003,12 @@ export class World {
         <li>${st(s.flags.includes('wallet:done'))} 옆집 할머니의 잃어버린 지갑 ${s.flags.includes('wallet:have') ? '<span class="muted">(주웠다! 할머니께 가져다 드리자)</span>' : '<span class="muted">(공원 근처 어딘가)</span>'}</li>
         <li>${st(s.flags.includes('cats:done'))} 동네 고양이 찾기 ${cats}/${CATS.length}</li>
         <li>💥 길에서 사람과 부딪치면 돌발 만남이 생겨요 (하루 한 번씩)</li>
+      </ul>
+      <div class="qhead">동네 활동 (하루 한 번씩, 미니게임)</div>
+      <ul class="qlist">
+        <li>${st(s.dayFlags.includes('job:meeting'))} <b>09~12시</b> 📊 오전 회의 · 말 끊기 타이밍 <span class="muted">· 회사 앞 (출근한 날)</span></li>
+        <li>${st(s.dayFlags.includes('job:cafe'))} <b>10~16시</b> ☕ 카페 알바 · 주문 기억하기 <span class="muted">· 카페 앞</span></li>
+        <li>${st(s.dayFlags.includes('job:bench'))} <b>08~21시</b> 🪑 사람 구경 · 표정 읽기 <span class="muted">· 공원 벤치 (배터리 회복)</span></li>
       </ul>
       <p class="muted">미션 보상: S ${won(MISSION_REWARD.S.money)} · A ${won(MISSION_REWARD.A.money)} · B ${won(MISSION_REWARD.B.money)}. 놓친 미션은 다음 날 다시 할 수 있어요.</p>
       <button class="btn primary" id="ok">닫기</button>`);

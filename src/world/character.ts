@@ -9,6 +9,10 @@ export interface Look {
   hatColor?: string;
   glasses?: 'round' | 'sun' | null;
   bag?: boolean;
+  /** 머리 모양 (초상화·도트 공용) */
+  hairStyle?: 'short' | 'long' | 'pony' | 'part' | 'bun';
+  /** 넥타이 (정장) */
+  tie?: boolean;
 }
 
 export const DEFAULT_LOOK: Look = { skin: '#f2c9a0', hair: '#2b2118', shirt: '#4f6dff', pants: '#2d3047', hat: null, glasses: null, bag: false };
@@ -95,6 +99,23 @@ export function drawCharacter(g: CanvasRenderingContext2D, look: Look, x: number
     r(L ? 7 : 2, hy + 2, 3, 4, look.hair);
     r(L ? 3 : 8, hy + 4, 1, 2, '#1a1a1a');
   }
+  // 머리 모양
+  const hs = look.hairStyle ?? 'short';
+  if (hs === 'long') {
+    if (dir === 0) {
+      r(1, hy + 2, 2, 7, look.hair);
+      r(9, hy + 2, 2, 7, look.hair);
+    } else if (dir === 1) r(2, hy + 5, 8, 4, look.hair);
+    else r(dir === 2 ? 7 : 2, hy + 5, 3, 4, look.hair);
+  } else if (hs === 'pony') {
+    if (dir === 1) r(5, hy + 5, 2, 5, hairDark);
+    else if (dir === 2) r(10, hy + 2, 2, 5, hairDark);
+    else if (dir === 3) r(0, hy + 2, 2, 5, hairDark);
+    else r(10, hy + 1, 2, 4, hairDark);
+  } else if (hs === 'bun') {
+    r(4, hy - 2, 4, 2, look.hair);
+  }
+  if (look.tie && dir === 0) r(5, 8 - by, 2, 4, '#c0392b');
   // 안경
   if (look.glasses && dir !== 1) {
     const c = look.glasses === 'sun' ? '#111' : '#6b3f1f';

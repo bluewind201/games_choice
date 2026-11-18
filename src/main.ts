@@ -13,9 +13,18 @@ import { STAGES, Stage, DIMS_BY_LEVEL, Choice, Emotion, MinigameId, DimKey } fro
 import { MG_101 } from './minigames/catch';
 import { MG_402 } from './minigames/mash';
 import { MG_602 } from './minigames/find';
+import { MG_701 } from './minigames/timing';
+import { MG_702 } from './minigames/memory';
+import { MG_703 } from './minigames/faces';
 import type { MinigameDef, MgResult } from './minigames/types';
 import { shareCard } from './ui/share';
 import { World, newWorldSave } from './world/world';
+import { NPCS } from './world/data';
+import { DEFAULT_LOOK, Look } from './world/character';
+import { Portrait } from './ui/portrait';
+import { typewrite, sfx, shake, vibrate as buzz, setInstantText } from './ui/dialogue';
+import { drawScene, SceneKind } from './ui/scene';
+import { renderMap, ax } from './world/map';
 import { MISSIONS, MissionStage, MissionOption, clockText, missionResult, startPatience, patienceDelta } from './data/missions';
 
 const MINIGAMES: Record<MinigameId, MinigameDef> = { MG_101, MG_402, MG_602 };
@@ -38,7 +47,19 @@ function persist() {
   writeSave(save);
 }
 
-// ---------- 3D 동네 ----------
+// ---------- 초상화 ----------
+const MISSION_SCENE: Record<string, SceneKind> = { MS_301: 'office', MS_201: 'pasta', MS_101: 'park' };
+function npcLookFor(missionId: string): Look {
+  const n = NPCS.find((x) => x.missionId === missionId);
+  return { ...DEFAULT_LOOK, ...(n?.look ?? {}) };
+}
+function myLook(): Look {
+  return save.world?.look ?? DEFAULT_LOOK;
+}
+let portrait: Portrait | null = null;
+if (/[?&]fasttext/.test(location.search)) setInstantText(true);
+
+// ---------- 동네 ----------
 let world: World | null = null;
 let missionDone: ((grade: Grade) => void) | null = null;
 let lastMissionGrade: Grade = 'F';
@@ -71,8 +92,34 @@ function enterWorld() {
       app.hidden = false;
       screenPersona();
     },
+    playMinigame: (id) => runWorldMinigame(id),
   });
   world.start();
+}
+
+const WORLD_MG: Record<string, MinigameDef> = { MG_701, MG_702, MG_703, MG_101, MG_402, MG_602 };
+
+/** 동네 활동용 미니게임 (준비 화면 → 게임 → 결과) */
+async function runWorldMinigame(id: string): Promise<MgResult> {
+  const def = WORLD_MG[id];
+  const ov = document.createElement('div');
+  ov.className = 'mg-overlay';
+  ov.innerHTML = `<div class="mg-ready"><div class="siren">🎮</div><h2>${esc(def.title)}</h2><p>${esc(def.howTo)}</p><button class="btn primary" id="go">시작!</button></div>`;
+  document.body.appendChild(ov);
+  await new Promise<void>((r) => ((ov.querySelector('#go') as HTMLButtonElement).onclick = () => r()));
+  sfx.pick();
+  const stageEl = document.createElement('div');
+  stageEl.className = 'mg-root';
+  ov.innerHTML = '';
+  ov.appendChild(stageEl);
+  const npc = activeProfile() ?? MISSIONS[0].npc;
+  const res = await def.run({ root: stageEl, npc, hostile: false });
+  if (res === 'fail') sfx.bad();
+  else sfx.good();
+  stageEl.insertAdjacentHTML('beforeend', `<div class="mg-result ${res}">${res === 'great' ? '대성공!' : res === 'normal' ? '성공!' : '실패…'}</div>`);
+  await sleep(1000);
+  ov.remove();
+  return res;
 }
 
 /** 미션 결과 화면에서 동네로 돌아갈 때 */
@@ -151,6 +198,8 @@ function screenTitle() {
   const has = !!save.realProfile;
   render(`
     <div class="screen title-screen">
+      <div class="title-bg" id="tbg"></div>
+      <div class="title-chars" id="tchars"></div>
       <div class="logo">선택의<br/>연속</div>
       <p class="sub">상대의 성향을 추리하고, 말 한마디로 판을 뒤집어라</p>
       <div class="stack">
@@ -159,6 +208,7 @@ function screenTitle() {
       </div>
       <p class="fine">이 게임의 성향 궁합은 재미로 즐기는 밈이에요. 실제 사람을 판단하는 기준이 아니에요.<br/>입력한 정보는 이 기기에만 저장돼요.</p>
     </div>`);
+  titleArt();
   $('#new').onclick = () => {
     if (has) {
       clearSave();
@@ -167,6 +217,27 @@ function screenTitle() {
     screenBirth();
   };
   if (has) $('#continue').onclick = () => enterWorld();
+}
+
+function titleArt() {
+  try {
+    const map = renderMap();
+    const c = document.createElement('canvas');
+    c.width = 480;
+    c.height = 480;
+    const g = c.getContext('2d')!;
+    g.imageSmoothingEnabled = false;
+    g.drawImage(map, ax(-30), ax(-30), 480, 480, 0, 0, 480, 480);
+    $('#tbg').style.backgroundImage = `url(${c.toDataURL()})`;
+  } catch {
+    /* 배경 없이도 동작 */
+  }
+  const emos: Emotion[] = ['SUSPECT', 'HAPPY', 'PANIC'];
+  ['MS_301', 'MS_201', 'MS_101'].forEach((id, i) => {
+    const p = new Portrait(npcLookFor(id));
+    p.setEmotion(emos[i]);
+    $('#tchars').appendChild(p.el);
+  });
 }
 
 // ---------- 온보딩: 생년월일·혈액형 ----------
@@ -447,6 +518,28 @@ function updateBars() {
 }
 
 async function say(speaker: 'npc' | 'me', text: string, emotion?: Emotion) {
+  const pw = app.querySelector('#pwrap') as HTMLElement | null;
+  if (pw && portrait && ms) {
+    // 미션 장면: 말하는 사람의 초상화로 바꾸고, 표정을 바꾼 뒤 한 글자씩 찍는다
+    const look = speaker === 'npc' ? npcLookFor(ms.m.id) : myLook();
+    if (portrait.look !== look) {
+      portrait.setLook(look);
+      pw.classList.remove('slide-in');
+      void pw.offsetWidth;
+      pw.classList.add('slide-in');
+    }
+    pw.classList.toggle('me', speaker === 'me');
+    portrait.setEmotion(emotion ?? (speaker === 'me' ? 'NORMAL' : portrait.emotion));
+    $('#speaker').textContent = speaker === 'npc' ? ms.m.npcName : activeName() === '진짜 나' ? '나' : `나 (${activeName()})`;
+    $('#speaker').className = `nameplate${speaker === 'me' ? ' me' : ''}`;
+    const p = portrait;
+    await typewrite($('#dtext'), text, {
+      voice: speaker === 'me' ? 520 : ms.m.id === 'MS_301' ? 260 : 400,
+      onTalk: (t) => p.setTalking(t),
+      shakeTarget: app.querySelector('.stage') as HTMLElement,
+    });
+    return;
+  }
   $('#speaker').textContent = speaker === 'npc' ? run.stage.npcName : '나';
   $('#speaker').className = `speaker sp-${speaker}`;
   if (emotion) $('#emo').textContent = EMOTION_ICON[emotion];
@@ -457,6 +550,7 @@ function waitTap(label = '▶ 계속'): Promise<void> {
   return new Promise((resolve) => {
     $('#choices').innerHTML = `<button class="btn next" id="cont">${label}</button>`;
     $('#cont').onclick = () => {
+      sfx.pick();
       $('#choices').innerHTML = '';
       resolve();
     };
@@ -673,6 +767,9 @@ async function cutIn(shout: string) {
   c.className = 'cutin';
   c.innerHTML = `<div class="cutin-lines"></div><div class="cutin-text">${esc(shout)}</div>`;
   document.body.appendChild(c);
+  sfx.stamp();
+  setTimeout(() => sfx.stamp(), 120);
+  buzz([60, 40, 120]);
   try {
     navigator.vibrate?.(250);
   } catch {
@@ -779,7 +876,7 @@ function startMission(m: MissionStage) {
     <div class="screen intro" style="background:${m.bg}">
       <div class="muted">${esc(m.chapter)}</div>
       <h2>${esc(m.title)}</h2>
-      <div class="npc-big">${m.npcIcon}</div>
+      <div class="npc-big" id="introP"></div>
       <div class="npc-name">${esc(m.npcName)} <span class="muted">${esc(m.npcRole)}</span></div>
       <p class="intro-text">${esc(m.intro)}</p>
       <div class="compat-box mission-goal">
@@ -794,7 +891,13 @@ function startMission(m: MissionStage) {
       <p class="fine">🙇 맞춰주기는 안전하지만 시간이 들고 미션이 안 나아가요. ⚡ 밀어붙이기는 빠르지만, 상대 성향에 안 맞는 방식이면 ${esc(m.patienceLabel)}이(가) 크게 깎여요. 추리수첩🔍으로 상대를 읽고 어떤 방식으로 밀지 고르세요.</p>
       <button class="btn primary" id="start">작전 시작</button>
     </div>`);
+  {
+    const ip = new Portrait(npcLookFor(m.id));
+    $('#introP').appendChild(ip.el);
+    ip.setEmotion(m.beats[0]?.emotion ?? 'NORMAL');
+  }
   $('#start').onclick = () => {
+    sfx.pick();
     missionShell();
     playBeat(0);
   };
@@ -803,23 +906,31 @@ function startMission(m: MissionStage) {
 function missionShell() {
   const m = ms!.m;
   render(`
-    <div class="stage" style="background:${m.bg}">
+    <div class="stage vn">
       <div class="mbars">
-        <div class="clock"><span class="muted">퇴근까지</span><b id="clock"></b></div>
+        <div class="clock"><span class="muted">마감까지</span><b id="clock"></b></div>
         <div class="bar"><span>🎯 미션</span><div class="track"><div class="fill progress" id="progFill"></div></div><b id="progNum"></b></div>
         <div class="bar"><span>😤 ${esc(m.patienceLabel.split(' ').pop()!)}</span><div class="track"><div class="fill patience" id="patFill"></div></div><b id="patNum"></b></div>
         <div class="bar"><span>🔋 배터리</span><div class="track"><div class="fill battery" id="batFill"></div></div><b id="batNum"></b></div>
         <button class="note-btn" id="note">🔍<span id="noteCount">0</span></button>
       </div>
-      <div class="place muted">🎯 ${esc(m.mission)}</div>
-      <div class="npc">
-        <div class="npc-portrait">${m.npcIcon}<span class="emo" id="emo">🙂</span></div>
-        <div class="npc-name">${esc(m.npcName)} <span class="muted">${esc(m.npcRole)}</span></div>
+      <div class="scene" id="scene">
+        <canvas class="scene-bg" id="sceneBg"></canvas>
+        <div class="portrait-wrap" id="pwrap"></div>
+        <div class="mission-chip">🎯 ${esc(m.mission)}</div>
+        <button class="sound-btn" id="snd" aria-label="소리 켜고 끄기">${sfx.muted ? '🔇' : '🔊'}</button>
       </div>
-      <div class="dialog"><div class="speaker" id="speaker"></div><div class="text" id="dtext"></div></div>
+      <div class="vn-box"><div class="nameplate" id="speaker"></div><div class="text vn-text" id="dtext"></div><div class="next-ind">▼</div></div>
       <div class="choices" id="choices"></div>
     </div>`);
+  drawScene($<HTMLCanvasElement>('#sceneBg'), MISSION_SCENE[m.id] ?? 'office', ms!.clock);
+  portrait?.destroy();
+  portrait = new Portrait(npcLookFor(m.id));
+  $('#pwrap').appendChild(portrait.el);
   $('#note').onclick = () => openNotebook();
+  $('#snd').onclick = () => {
+    $('#snd').textContent = sfx.toggle() ? '🔇' : '🔊';
+  };
   updateMissionBars();
 }
 
@@ -867,6 +978,8 @@ async function playBeat(i: number) {
     if (res === 'fail') s.patience += patienceDelta(beat.minigame.failPatience, run.compat.batteryMult);
     updateMissionBars();
     toast(res === 'fail' ? `실패… ${s.m.patienceLabel}이(가) 깎였다` : `${res === 'great' ? '대성공!' : '성공!'} 미션 +${gain}`, res === 'fail' ? 'bad' : 'good');
+    if (res === 'fail') sfx.bad();
+    else sfx.good();
   } else if (beat.objection) {
     await missionObjection(beat.objection);
   } else if (beat.options) {
@@ -887,6 +1000,10 @@ async function playBeat(i: number) {
       `${opt.approach} · 미션 ${opt.progress >= 0 ? '+' : ''}${opt.progress} · ${s.m.patienceLabel.split(' ').pop()} ${pd >= 0 ? '+' : ''}${pd} · ${opt.minutes}분`,
       pd < 0 || opt.progress < 0 ? 'bad' : 'good',
     );
+    if (pd < 0 || opt.progress < 0) {
+      sfx.bad();
+      shake(app.querySelector('.mbars') as HTMLElement);
+    } else sfx.good();
     await waitTap();
     await say('npc', opt.reaction, opt.emotion);
   }
