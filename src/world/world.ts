@@ -3,8 +3,8 @@ import { drawCharacter, dirOf, Dir, Look, DEFAULT_LOOK, lookPreview } from './ch
 import {
   PLACES, NPCS, NpcDef, ENCOUNTERS, SHOP, REWARD_ITEMS, ShopItem, MISSION_REWARD, xpToNext, LEVEL_TITLE,
   CATS, WALLET_POS, BED_POS,
-} from './data';
-import { U, ax, MAP_PX, Rect, TREES, LAMPS, renderMap, buildColliders, placeRect, doorSide } from './map';
+} from './data_v05';
+import { U, ax, MAP_PX, Rect, TREES, LAMPS, renderMap, buildColliders, placeRect, doorSide } from './map_v05';
 import { esc, toast, modal, won } from '../ui/common';
 import { TalkOverlay, sfx } from '../ui/dialogue';
 import type { Emotion } from '../data/stages';

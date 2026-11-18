@@ -2,28 +2,6 @@
 import type { Look } from './character';
 import type { Emotion } from '../data/stages';
 
-export interface Place {
-  id: string;
-  name: string;
-  x: number;
-  z: number;
-  w: number; // x 크기
-  d: number; // z 크기
-  h: number;
-  color: string;
-  roof?: string;
-  sign?: string;
-}
-
-export const PLACES: Place[] = [
-  { id: 'home', name: '우리 집', x: -26, z: 22, w: 9, d: 8, h: 5, color: '#f4d6a0', roof: '#c0504d', sign: '🏠 집' },
-  { id: 'office', name: '회사', x: 26, z: -22, w: 12, d: 10, h: 16, color: '#9fb4c7', roof: '#5b6b7c', sign: '🏢 회사' },
-  { id: 'pasta', name: '파스타 가게', x: 26, z: 22, w: 10, d: 8, h: 5, color: '#fff1e0', roof: '#2e8b57', sign: '🍝 파스타' },
-  { id: 'store', name: '편의점·옷가게', x: -6, z: 10, w: 8, d: 6, h: 4.5, color: '#e8f6ff', roof: '#1e88e5', sign: '🏪 편의점' },
-  { id: 'apt', name: '아파트', x: 2, z: 32, w: 14, d: 6, h: 12, color: '#d9d4e7', roof: '#7d6fa8' },
-  { id: 'cafe', name: '카페', x: 8, z: -30, w: 7, d: 6, h: 4, color: '#f7e1d7', roof: '#8d5b4c', sign: '☕ 카페' },
-];
-
 export type NpcKind = 'mission' | 'quest' | 'encounter' | 'shop';
 
 export interface NpcDef {
@@ -40,21 +18,21 @@ export interface NpcDef {
 }
 
 export const NPCS: NpcDef[] = [
-  { id: 'boss', name: '박 팀장', kind: 'mission', missionId: 'MS_301', x: 26, z: -15.5,
+  { id: 'boss', name: '박 팀장', kind: 'mission', missionId: 'MS_301', x: 114, z: 32.8,
     look: { skin: '#e8b98c', hair: '#555', shirt: '#2d3047', pants: '#2d3047', glasses: 'round', hairStyle: 'part', tie: true } },
-  { id: 'hana', name: '하나 (러닝크루)', kind: 'mission', missionId: 'MS_101', x: -24, z: -20,
+  { id: 'hana', name: '하나 (러닝크루)', kind: 'mission', missionId: 'MS_101', x: 30, z: 45,
     look: { skin: '#f2c9a0', hair: '#7a3e1d', shirt: '#ff6b81', pants: '#222', hat: 'cap', hatColor: '#fff', hairStyle: 'pony' } },
-  { id: 'jiwoo', name: '지우 (소개팅)', kind: 'mission', missionId: 'MS_201', x: 26, z: 16.5,
+  { id: 'jiwoo', name: '지우 (소개팅)', kind: 'mission', missionId: 'MS_201', x: 106, z: 94.8,
     look: { skin: '#f6d2b0', hair: '#c47f3d', shirt: '#ffd166', pants: '#4f6dff', hairStyle: 'long' } },
-  { id: 'clerk', name: '편의점 사장님', kind: 'shop', x: -6, z: 5.5,
+  { id: 'clerk', name: '편의점 사장님', kind: 'shop', x: 55, z: 94.8,
     look: { skin: '#e8b98c', hair: '#222', shirt: '#1e88e5', pants: '#333', hat: 'cap', hatColor: '#1e88e5' } },
-  { id: 'grandma', name: '옆집 할머니', kind: 'quest', x: -19, z: 27,
+  { id: 'grandma', name: '옆집 할머니', kind: 'quest', x: 7.5, z: 94.8,
     look: { skin: '#e9c4a0', hair: '#ddd', shirt: '#8e6bbf', pants: '#5a4a6a', hairStyle: 'bun' } },
-  { id: 'courier', name: '택배 기사님', kind: 'encounter', x: -30, z: 2, patrol: [[-32, 2], [32, 2]],
+  { id: 'courier', name: '택배 기사님', kind: 'encounter', x: 10, z: 62.8, patrol: [[6, 62.8], [150, 62.8]],
     look: { skin: '#d9a77c', hair: '#222', shirt: '#2e8b57', pants: '#2e8b57', hat: 'cap', hatColor: '#2e8b57' } },
-  { id: 'neighbor', name: '윗집 이웃', kind: 'encounter', x: 0, z: 24, patrol: [[-12, 24], [12, 24]],
+  { id: 'neighbor', name: '윗집 이웃', kind: 'encounter', x: 20, z: 100.8, patrol: [[4, 100.8], [70, 100.8]],
     look: { skin: '#f2c9a0', hair: '#111', shirt: '#999', pants: '#555', glasses: 'sun' } },
-  { id: 'flyer', name: '전단지 알바생', kind: 'encounter', x: 4, z: -6, patrol: [[4, -8], [4, 8]],
+  { id: 'flyer', name: '전단지 알바생', kind: 'encounter', x: 90, z: 38.8, patrol: [[86, 38.8], [156, 38.8]],
     look: { skin: '#f6d2b0', hair: '#e2445c', shirt: '#fff', pants: '#222', hat: 'beanie', hatColor: '#ffd166' } },
 ];
 
@@ -99,6 +77,7 @@ export interface ShopItem {
 
 export const SHOP: ShopItem[] = [
   { id: 'coffee', name: '아이스 아메리카노 (배터리 +25)', price: 1500, minLevel: 1, apply: {}, icon: '🧋' },
+  { id: 'bandage', name: '반창고 (HP +30, 상태 회복)', price: 2000, minLevel: 1, apply: {}, icon: '🩹' },
   { id: 'shirt_red', name: '빨간 티셔츠', price: 3000, minLevel: 1, apply: { shirt: '#e2445c' }, icon: '👕' },
   { id: 'shirt_mint', name: '민트 티셔츠', price: 3000, minLevel: 1, apply: { shirt: '#43d39e' }, icon: '👕' },
   { id: 'shirt_yellow', name: '노란 후드', price: 5000, minLevel: 1, apply: { shirt: '#ffd166' }, icon: '🧥' },
@@ -130,9 +109,39 @@ export const xpToNext = (level: number) => 100 * level;
 export const LEVEL_TITLE = ['', '사회생활 새내기', '눈치 수습생', '동네 인싸', '처세술 고수', '인간관계 마스터'];
 
 export const CATS: [number, number][] = [
-  [12, 26],
-  [38, -4],
-  [-38, -2],
+  [50, 19],
+  [150, 82],
+  [64, 116],
 ];
-export const WALLET_POS: [number, number] = [-31, -12];
-export const BED_POS: [number, number] = [-24, 16.5];
+export const WALLET_POS: [number, number] = [14, 40];
+export const BED_POS: [number, number] = [19, 94.6];
+
+// ---------- 교통 ----------
+export interface Stop {
+  id: string;
+  name: string;
+  x: number;
+  z: number;
+}
+/** 버스 정류장 (한 노선이 모두 돈다) */
+export const BUS_STOPS: Stop[] = [
+  { id: 'home', name: '주택가', x: 27, z: 94.7 },
+  { id: 'park', name: '공원 앞', x: 44, z: 54.7 },
+  { id: 'office', name: '회사 앞', x: 104, z: 32.7 },
+  { id: 'pasta', name: '파스타 거리', x: 96, z: 94.7 },
+];
+export const BUS_FARE = 1500;
+/** 지하철역 출입구 (두 역만 잇는다) */
+export const SUBWAY: Stop[] = [
+  { id: 'homest', name: '주택가역', x: 66, z: 94.6 },
+  { id: 'cityst', name: '시청역', x: 136, z: 32.6 },
+];
+export const SUBWAY_FARE = 1400;
+/** 공공자전거 대여소 */
+export const BIKE_RACKS: Stop[] = [
+  { id: 'home', name: '주택가', x: 11, z: 101.6 },
+  { id: 'park', name: '공원 앞', x: 52, z: 54.7 },
+  { id: 'office', name: '회사 앞', x: 128, z: 32.7 },
+  { id: 'pasta', name: '파스타 거리', x: 114, z: 94.7 },
+];
+export const BIKE_FARE = 1000;

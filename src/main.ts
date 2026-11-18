@@ -19,12 +19,12 @@ import { MG_703 } from './minigames/faces';
 import type { MinigameDef, MgResult } from './minigames/types';
 import { shareCard } from './ui/share';
 import { World, newWorldSave } from './world/world';
-import { NPCS } from './world/data';
+import { NPCS } from './world/data_v05';
 import { DEFAULT_LOOK, Look } from './world/character';
 import { Portrait } from './ui/portrait';
 import { typewrite, sfx, shake, vibrate as buzz, setInstantText } from './ui/dialogue';
 import { drawScene, SceneKind } from './ui/scene';
-import { renderMap, ax } from './world/map';
+import { renderMap, ax } from './world/map_v05';
 import { MISSIONS, MissionStage, MissionOption, clockText, missionResult, startPatience, patienceDelta } from './data/missions';
 
 const MINIGAMES: Record<MinigameId, MinigameDef> = { MG_101, MG_402, MG_602 };
