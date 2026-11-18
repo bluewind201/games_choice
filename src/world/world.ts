@@ -1,10 +1,10 @@
-// 레트로 3D 동네: 돌아다니며 사람과 부딪치고, 미션·퀘스트를 하고, 돈을 벌어 캐릭터를 꾸민다.
-import * as THREE from 'three';
-import { buildCharacter, applyLook, animateWalk, CharRig, Look, DEFAULT_LOOK } from './character';
+// 2D 도트 레트로 동네: 위에서 내려다보며 돌아다니고, 사람과 부딪치고, 미션·퀘스트를 하고, 돈을 벌어 캐릭터를 꾸민다.
+import { drawCharacter, dirOf, Dir, Look, DEFAULT_LOOK, lookPreview } from './character';
 import {
   PLACES, NPCS, NpcDef, ENCOUNTERS, SHOP, REWARD_ITEMS, ShopItem, MISSION_REWARD, xpToNext, LEVEL_TITLE,
   CATS, WALLET_POS, BED_POS,
 } from './data';
+import { U, ax, MAP_PX, Rect, TREES, LAMPS, renderMap, buildColliders, placeRect, doorSide } from './map';
 import { esc, toast, modal, won } from '../ui/common';
 
 export interface WorldSave {
@@ -20,8 +20,10 @@ export interface WorldSave {
   pos: [number, number];
 }
 
+export const HOME_START: [number, number] = [-24, 12.5];
+
 export function newWorldSave(): WorldSave {
-  return { day: 1, clock: 8 * 60, level: 1, xp: 0, money: 5000, look: { ...DEFAULT_LOOK }, owned: [], dayFlags: [], flags: [], pos: [-24, 13] };
+  return { day: 1, clock: 8 * 60, level: 1, xp: 0, money: 5000, look: { ...DEFAULT_LOOK }, owned: [], dayFlags: [], flags: [], pos: [...HOME_START] };
 }
 
 export interface WorldHooks {
@@ -42,14 +44,15 @@ const MISSION_WHERE: Record<string, string> = { MS_301: '회사 앞 박 팀장',
 const clockText = (m: number) => `${String(Math.floor(m / 60) % 24).padStart(2, '0')}:${String(m % 60).padStart(2, '0')}`;
 const MIN_PER_SEC = 4; // 현실 1초 = 게임 4분
 const OFFICE_DOOR: [number, number] = [26, -15];
+const SPEED = 6.5;
 
 interface Npc {
   def: NpcDef;
-  rig: CharRig;
-  marker?: THREE.Sprite;
-  label: THREE.Sprite;
-  dir: number;
-  seg: number;
+  x: number;
+  z: number;
+  dir: Dir;
+  moving: boolean;
+  fwd: boolean;
 }
 
 interface Interactable {
@@ -60,42 +63,20 @@ interface Interactable {
   visible: () => boolean;
 }
 
-function textSprite(text: string, color = '#fff', bg = 'rgba(20,12,45,.75)', scale = 1): THREE.Sprite {
-  const c = document.createElement('canvas');
-  const g = c.getContext('2d')!;
-  g.font = 'bold 28px sans-serif';
-  const w = Math.ceil(g.measureText(text).width) + 24;
-  c.width = w;
-  c.height = 44;
-  g.font = 'bold 28px sans-serif';
-  g.fillStyle = bg;
-  g.beginPath();
-  g.roundRect(0, 0, w, 44, 14);
-  g.fill();
-  g.fillStyle = color;
-  g.textBaseline = 'middle';
-  g.fillText(text, 12, 23);
-  const tex = new THREE.CanvasTexture(c);
-  tex.magFilter = THREE.NearestFilter;
-  tex.minFilter = THREE.NearestFilter;
-  const s = new THREE.Sprite(new THREE.SpriteMaterial({ map: tex, depthTest: false, transparent: true }));
-  s.scale.set((w / 44) * 0.6 * scale, 0.6 * scale, 1);
-  s.renderOrder = 10;
-  return s;
+interface Target {
+  x: number;
+  z: number;
+  icon: string;
+  label: string;
 }
 
 export class World {
-  private renderer: THREE.WebGLRenderer;
-  private scene = new THREE.Scene();
-  private camera: THREE.PerspectiveCamera;
-  private player: CharRig;
+  private canvas: HTMLCanvasElement;
+  private g: CanvasRenderingContext2D;
+  private map: HTMLCanvasElement;
+  private colliders: Rect[];
   private npcs: Npc[] = [];
-  private colliders: { minX: number; maxX: number; minZ: number; maxZ: number }[] = [];
   private interactables: Interactable[] = [];
-  private cats: THREE.Group[] = [];
-  private wallet?: THREE.Mesh;
-  private sun!: THREE.DirectionalLight;
-  private hemi!: THREE.HemisphereLight;
   private keys = new Set<string>();
   private joy = { x: 0, y: 0, active: false };
   private paused = false;
@@ -105,24 +86,28 @@ export class World {
   private clockAcc = 0;
   private hud: HTMLElement;
   private actionBtn!: HTMLButtonElement;
+  private mini!: HTMLCanvasElement;
+  private miniAcc = 0;
   private current: Interactable | null = null;
-  private heading = 0;
-  /** 카메라와 플레이어 사이를 가리면 반투명해지는 건물 */
-  private fadeables: { meshes: THREE.Mesh[]; sign?: THREE.Sprite; minX: number; maxX: number; minZ: number; faded: boolean }[] = [];
+  private px: number;
+  private pz: number;
+  private dir: Dir = 0;
+  private moving = false;
+  private cssW = 1;
+  private cssH = 1;
+  private dpr = 1;
+  /** 도트 1개가 화면에서 차지하는 CSS 픽셀 */
+  private P = 2;
 
   constructor(private host: HTMLElement, private hooks: WorldHooks) {
-    this.renderer = new THREE.WebGLRenderer({ antialias: false, powerPreference: 'low-power' });
-    this.renderer.shadowMap.enabled = true;
-    this.renderer.shadowMap.type = THREE.BasicShadowMap;
-    this.renderer.domElement.className = 'world-canvas';
-    host.appendChild(this.renderer.domElement);
-    this.camera = new THREE.PerspectiveCamera(50, 1, 0.5, 200);
-    this.scene.fog = new THREE.Fog(0x9fd3ff, 40, 95);
-    this.buildWorld();
+    this.canvas = document.createElement('canvas');
+    this.canvas.className = 'world-canvas';
+    host.appendChild(this.canvas);
+    this.g = this.canvas.getContext('2d')!;
+    this.map = renderMap();
+    this.colliders = buildColliders();
     const s = hooks.save();
-    this.player = buildCharacter(s.look);
-    this.player.root.position.set(s.pos[0], 0, s.pos[1]);
-    this.scene.add(this.player.root);
+    [this.px, this.pz] = this.free(s.pos[0], s.pos[1]);
     this.buildNpcs();
     this.buildPickups();
     this.hud = document.createElement('div');
@@ -134,133 +119,19 @@ export class World {
     this.resize();
   }
 
-  // ---------- 맵 만들기 ----------
-  private addBox(w: number, h: number, d: number, color: string, x: number, y: number, z: number, collide = true, cast = true) {
-    const m = new THREE.Mesh(new THREE.BoxGeometry(w, h, d), new THREE.MeshLambertMaterial({ color, flatShading: true }));
-    m.position.set(x, y, z);
-    m.castShadow = cast;
-    m.receiveShadow = true;
-    this.scene.add(m);
-    if (collide) this.colliders.push({ minX: x - w / 2, maxX: x + w / 2, minZ: z - d / 2, maxZ: z + d / 2 });
-    return m;
-  }
-
-  private buildWorld() {
-    this.hemi = new THREE.HemisphereLight(0xdff1ff, 0x5a7a4a, 0.9);
-    this.scene.add(this.hemi);
-    this.sun = new THREE.DirectionalLight(0xffffff, 1.1);
-    this.sun.position.set(30, 50, 20);
-    this.sun.castShadow = true;
-    this.sun.shadow.mapSize.set(512, 512);
-    const sc = this.sun.shadow.camera as THREE.OrthographicCamera;
-    sc.left = -50;
-    sc.right = 50;
-    sc.top = 50;
-    sc.bottom = -50;
-    this.scene.add(this.sun);
-
-    // 땅, 도로, 인도, 공원, 강
-    const ground = new THREE.Mesh(new THREE.PlaneGeometry(100, 100), new THREE.MeshLambertMaterial({ color: '#8cc06a' }));
-    ground.rotation.x = -Math.PI / 2;
-    ground.receiveShadow = true;
-    this.scene.add(ground);
-    const flat = (w: number, d: number, color: string, x: number, z: number, y = 0.02) => {
-      const m = new THREE.Mesh(new THREE.PlaneGeometry(w, d), new THREE.MeshLambertMaterial({ color }));
-      m.rotation.x = -Math.PI / 2;
-      m.position.set(x, y, z);
-      m.receiveShadow = true;
-      this.scene.add(m);
-    };
-    flat(9, 100, '#c9c3b8', 0, 0, 0.01); // 인도
-    flat(100, 9, '#c9c3b8', 0, 0, 0.01);
-    flat(6, 100, '#4a4a55', 0, 0); // 도로
-    flat(100, 6, '#4a4a55', 0, 0, 0.021);
-    for (let i = -46; i < 50; i += 6) {
-      flat(0.3, 2.4, '#f5f0d0', 0, i, 0.03);
-      flat(2.4, 0.3, '#f5f0d0', i, 0, 0.03);
-    }
-    flat(30, 24, '#79b85a', -27, -24, 0.015); // 공원 잔디
-    flat(100, 10, '#4aa3df', 0, -45, 0.04); // 강
-    this.colliders.push({ minX: -50, maxX: 50, minZ: -50, maxZ: -40 });
-    // 러닝 트랙
-    flat(24, 1.4, '#d98c5f', -27, -14, 0.03);
-    flat(24, 1.4, '#d98c5f', -27, -34, 0.03);
-    flat(1.4, 20, '#d98c5f', -39, -24, 0.03);
-    flat(1.4, 20, '#d98c5f', -15, -24, 0.03);
-
-    // 건물
-    for (const p of PLACES) {
-      const meshes = [this.addBox(p.w, p.h, p.d, p.color, p.x, p.h / 2, p.z)];
-      if (p.roof) meshes.push(this.addBox(p.w + 0.6, 0.6, p.d + 0.6, p.roof, p.x, p.h + 0.3, p.z, false));
-      this.fadeables.push({ meshes, minX: p.x - p.w / 2, maxX: p.x + p.w / 2, minZ: p.z - p.d / 2, faded: false });
-      // 창문
-      const rows = Math.max(1, Math.floor(p.h / 3));
-      for (let r = 0; r < rows; r++)
-        for (let c = -1; c <= 1; c++) {
-          const win = new THREE.Mesh(new THREE.PlaneGeometry(1.2, 1), new THREE.MeshLambertMaterial({ color: '#cfe8ff', emissive: '#223' }));
-          win.position.set(p.x + c * (p.w / 3.2), 1.8 + r * 3, p.z + (p.z > 0 ? -p.d / 2 - 0.01 : p.d / 2 + 0.01));
-          if (p.z > 0) win.rotation.y = Math.PI;
-          this.scene.add(win);
-        }
-      if (p.sign) {
-        const s = textSprite(p.sign, '#fff', 'rgba(35,25,74,.85)', 1.6);
-        s.position.set(p.x, p.h + 1.6, p.z);
-        this.scene.add(s);
-        this.fadeables[this.fadeables.length - 1].sign = s;
-      }
-    }
-    // 나무
-    const tree = (x: number, z: number) => {
-      this.addBox(0.5, 1.6, 0.5, '#7a5230', x, 0.8, z);
-      const leaf = new THREE.Mesh(new THREE.ConeGeometry(1.4, 2.6, 6), new THREE.MeshLambertMaterial({ color: '#3f8f4a', flatShading: true }));
-      leaf.position.set(x, 2.9, z);
-      leaf.castShadow = true;
-      this.scene.add(leaf);
-    };
-    const treePos: [number, number][] = [
-      [-36, -10], [-18, -10], [-36, -30], [-18, -30], [-28, -36], [-10, -20], [-40, 10], [-40, 30], [-12, 40], [16, 40],
-      [40, 34], [40, 12], [12, -14], [40, -36], [-10, -40], [14, 12], [-14, 22], [38, -12],
-    ];
-    treePos.forEach(([x, z]) => tree(x, z));
-    // 벤치, 가로등, 주차된 차
-    this.addBox(2.4, 0.5, 0.8, '#8b5a2b', -31, 0.45, -12.8);
-    const lamp = (x: number, z: number) => {
-      this.addBox(0.2, 4, 0.2, '#555', x, 2, z);
-      this.addBox(0.6, 0.3, 0.6, '#ffe9a8', x, 4.1, z, false);
-    };
-    [[-5, -5], [5, 5], [-5, 20], [5, -20], [20, -5], [-20, 5]].forEach(([x, z]) => lamp(x, z));
-    const car = (x: number, z: number, c: string, rot = false) => {
-      const w = rot ? 1.8 : 3.6;
-      const d = rot ? 3.6 : 1.8;
-      this.addBox(w, 1, d, c, x, 0.7, z);
-      this.addBox(rot ? 1.6 : 2, 0.8, rot ? 2 : 1.6, '#cfe8ff', x, 1.5, z, false);
-    };
-    car(14, -4.5, '#e2445c');
-    car(-16, 4.5, '#ffd166');
-    car(4.5, 18, '#4f6dff', true);
-    // 경계
-    this.colliders.push({ minX: 46, maxX: 60, minZ: -60, maxZ: 60 }, { minX: -60, maxX: -46, minZ: -60, maxZ: 60 }, { minX: -60, maxX: 60, minZ: 46, maxZ: 60 });
+  /** 저장된 위치가 건물 안이면 문 앞으로 옮긴다 */
+  private free(x: number, z: number): [number, number] {
+    const [cx, cz] = this.collide(x, z);
+    if (Math.hypot(cx - x, cz - z) > 0.01 || this.colliders.some((c) => x > c.minX && x < c.maxX && z > c.minZ && z < c.maxZ)) return [...HOME_START];
+    return [cx, cz];
   }
 
   private buildNpcs() {
     for (const def of NPCS) {
-      const rig = buildCharacter({ ...DEFAULT_LOOK, ...def.look });
-      rig.root.position.set(def.x, 0, def.z);
-      rig.root.rotation.y = def.kind === 'encounter' ? 0 : Math.atan2(0 - def.x, 0 - def.z) * 0 + Math.PI * (def.z < 0 ? 0 : 1);
-      this.scene.add(rig.root);
-      const label = textSprite(def.name, '#fff', 'rgba(20,12,45,.7)', 0.9);
-      label.position.y = 2.75;
-      rig.root.add(label);
-      let marker: THREE.Sprite | undefined;
-      if (def.kind === 'mission' || def.kind === 'quest' || def.kind === 'shop') {
-        marker = textSprite(def.kind === 'shop' ? '🛒' : '!', '#23194a', '#ffd166', 1.2);
-        marker.position.y = 3.5;
-        rig.root.add(marker);
-      }
-      this.npcs.push({ def, rig, marker, label, dir: 1, seg: 0 });
+      this.npcs.push({ def, x: def.x, z: def.z, dir: def.kind === 'encounter' ? 0 : def.z > 0 ? 1 : 0, moving: false, fwd: true });
       if (def.kind !== 'encounter') {
         this.interactables.push({
-          label: def.kind === 'shop' ? `🛒 ${def.name}` : `💬 ${def.name}`,
+          label: def.kind === 'shop' ? `🛒 ${def.name}` : `💬 ${def.name.split(' ')[0]}`,
           x: def.x,
           z: def.z,
           visible: () => true,
@@ -269,7 +140,7 @@ export class World {
       }
     }
     this.interactables.push({
-      label: '🛏️ 잠자기 (다음 날)',
+      label: '🛏️ 잠자기',
       x: BED_POS[0],
       z: BED_POS[1],
       visible: () => true,
@@ -279,40 +150,21 @@ export class World {
 
   private buildPickups() {
     const s = this.hooks.save();
-    CATS.forEach(([x, z], i) => {
-      const g = new THREE.Group();
-      const body = new THREE.Mesh(new THREE.BoxGeometry(0.8, 0.45, 0.4), new THREE.MeshLambertMaterial({ color: ['#f4a259', '#333', '#ddd'][i] }));
-      body.position.y = 0.35;
-      const head = new THREE.Mesh(new THREE.BoxGeometry(0.4, 0.38, 0.38), body.material);
-      head.position.set(0.45, 0.6, 0);
-      const e1 = new THREE.Mesh(new THREE.ConeGeometry(0.08, 0.18, 4), body.material);
-      e1.position.set(0.45, 0.85, -0.1);
-      const e2 = e1.clone();
-      e2.position.z = 0.1;
-      g.add(body, head, e1, e2);
-      g.position.set(x, 0, z);
-      g.visible = !s.flags.includes(`cat:${i}`);
-      this.scene.add(g);
-      this.cats.push(g);
+    CATS.forEach(([x, z], i) =>
       this.interactables.push({
-        label: '🐈 고양이 쓰다듬기',
+        label: '🐈 쓰다듬기',
         x,
         z,
-        visible: () => g.visible,
+        visible: () => !s.flags.includes(`cat:${i}`),
         action: () => this.petCat(i),
-      });
-    });
-    this.wallet = new THREE.Mesh(new THREE.BoxGeometry(0.5, 0.15, 0.35), new THREE.MeshLambertMaterial({ color: '#8b2e2e' }));
-    this.wallet.position.set(WALLET_POS[0], 0.1, WALLET_POS[1]);
-    this.wallet.visible = !s.flags.includes('wallet:have') && !s.flags.includes('wallet:done');
-    this.scene.add(this.wallet);
+      }),
+    );
     this.interactables.push({
-      label: '👛 떨어진 지갑 줍기',
+      label: '👛 지갑 줍기',
       x: WALLET_POS[0],
       z: WALLET_POS[1],
-      visible: () => !!this.wallet?.visible,
+      visible: () => this.walletVisible(),
       action: () => {
-        this.wallet!.visible = false;
         const sv = this.hooks.save();
         sv.flags.push('wallet:have');
         this.hooks.persist();
@@ -320,6 +172,11 @@ export class World {
         this.refreshHud();
       },
     });
+  }
+
+  private walletVisible() {
+    const s = this.hooks.save();
+    return !s.flags.includes('wallet:have') && !s.flags.includes('wallet:done');
   }
 
   // ---------- HUD ----------
@@ -333,16 +190,19 @@ export class World {
           <div class="hud-bat" id="hBat"></div>
         </div>
       </div>
+      <div class="hud-next" id="hNext"></div>
+      <button class="hud-mini" id="hMini" aria-label="지도 열기"><canvas id="miniCv"></canvas><span>🗺️ 지도</span></button>
       <div class="hud-btns">
         <button id="hQuest" class="hud-btn">📋<span>퀘스트</span></button>
         <button id="hWard" class="hud-btn">👕<span>옷장</span></button>
         <button id="hMenu" class="hud-btn">🎭<span>캐릭터</span></button>
       </div>
-      <div class="hud-next" id="hNext"></div>
       <div class="joy" id="joy"><div class="joy-knob" id="joyKnob"></div></div>
       <button class="hud-action" id="hAction" hidden></button>`;
     this.actionBtn = this.hud.querySelector('#hAction') as HTMLButtonElement;
     this.actionBtn.onclick = () => this.current?.action();
+    this.mini = this.hud.querySelector('#miniCv') as HTMLCanvasElement;
+    (this.hud.querySelector('#hMini') as HTMLButtonElement).onclick = () => this.openMap();
     (this.hud.querySelector('#hQuest') as HTMLButtonElement).onclick = () => this.openQuests();
     (this.hud.querySelector('#hWard') as HTMLButtonElement).onclick = () => this.openWardrobe();
     (this.hud.querySelector('#hMenu') as HTMLButtonElement).onclick = () => {
@@ -362,19 +222,28 @@ export class World {
     q('#hXp').style.width = `${Math.min(100, (s.xp / xpToNext(s.level)) * 100)}%`;
     q('#hMoney').textContent = `💰 ${won(s.money)}`;
     q('#hBat').textContent = `🔋 ${this.hooks.battery()}`;
-    q('#hNext').textContent = this.nextGoal();
+    const t = this.target();
+    q('#hNext').textContent = t ? `${t.icon} ${t.label}` : '🗺️ 자유 시간: 동네를 돌아다니며 서브 퀘스트를 찾아보세요';
   }
 
-  /** 지금 가장 할 만한 일 한 줄 */
-  private nextGoal(): string {
+  /** 지금 가장 할 만한 일과 그 위치 */
+  private target(): Target | null {
     const s = this.hooks.save();
-    if (!s.dayFlags.includes('commute') && !s.dayFlags.includes('late') && s.clock <= 9 * 60) return '🎯 9시 전에 회사 앞까지 출근하기';
+    if (!s.dayFlags.includes('commute') && !s.dayFlags.includes('late') && s.clock <= 9 * 60)
+      return { x: OFFICE_DOOR[0], z: OFFICE_DOOR[1], icon: '🏢', label: '9시 전에 회사 앞까지 출근하기' };
     for (const id of ['MS_301', 'MS_201', 'MS_101']) {
       if (s.dayFlags.includes(`mission:${id}`)) continue;
-      if (s.clock <= MISSION_TIME[id]) return `🎯 ${clockText(MISSION_TIME[id])} ${MISSION_NAME[id]} · ${MISSION_WHERE[id]}`;
+      if (s.clock <= MISSION_TIME[id]) {
+        const n = NPCS.find((x) => x.missionId === id)!;
+        return { x: n.x, z: n.z, icon: '🎯', label: `${clockText(MISSION_TIME[id])} ${MISSION_NAME[id]} · ${MISSION_WHERE[id]}` };
+      }
     }
-    if (s.clock >= 21 * 60) return '🛏️ 집 앞에서 잠자기 → 다음 날';
-    return '🗺️ 자유 시간: 동네를 돌아다니며 서브 퀘스트를 찾아보세요';
+    if (s.clock >= 21 * 60) return { x: BED_POS[0], z: BED_POS[1], icon: '🛏️', label: '집 앞에서 잠자기 → 다음 날' };
+    if (s.flags.includes('wallet:have')) {
+      const n = NPCS.find((x) => x.id === 'grandma')!;
+      return { x: n.x, z: n.z, icon: '👛', label: '지갑을 옆집 할머니께 가져다 드리기' };
+    }
+    return null;
   }
 
   // ---------- 입력 ----------
@@ -382,6 +251,7 @@ export class World {
     window.addEventListener('keydown', (e) => {
       this.keys.add(e.key.toLowerCase());
       if ((e.key === ' ' || e.key === 'e') && this.current && !this.paused && this.running && !document.querySelector('.modal')) this.current.action();
+      if (e.key === 'm' && this.running && !this.paused) this.openMap();
     });
     window.addEventListener('keyup', (e) => this.keys.delete(e.key.toLowerCase()));
     const joy = this.hud.querySelector('#joy') as HTMLElement;
@@ -389,10 +259,8 @@ export class World {
     let id = -1;
     const move = (e: PointerEvent) => {
       const r = joy.getBoundingClientRect();
-      const cx = r.left + r.width / 2;
-      const cy = r.top + r.height / 2;
-      let dx = (e.clientX - cx) / (r.width / 2);
-      let dy = (e.clientY - cy) / (r.height / 2);
+      let dx = (e.clientX - (r.left + r.width / 2)) / (r.width / 2);
+      let dy = (e.clientY - (r.top + r.height / 2)) / (r.height / 2);
       const len = Math.hypot(dx, dy);
       if (len > 1) {
         dx /= len;
@@ -420,6 +288,7 @@ export class World {
   start() {
     this.host.hidden = false;
     this.paused = false;
+    this.resize();
     this.refreshHud();
     if (this.running) return;
     this.running = true;
@@ -429,7 +298,7 @@ export class World {
       const dt = Math.min(0.05, (now - this.last) / 1000);
       this.last = now;
       if (!this.paused) this.update(dt);
-      this.renderer.render(this.scene, this.camera);
+      this.draw();
       requestAnimationFrame(loop);
     };
     requestAnimationFrame(loop);
@@ -437,22 +306,25 @@ export class World {
 
   stop() {
     this.running = false;
-    this.hooks.save().pos = [this.player.root.position.x, this.player.root.position.z];
+    this.hooks.save().pos = [this.px, this.pz];
     this.hooks.persist();
     this.host.hidden = true;
   }
 
   private resize() {
-    const w = this.host.clientWidth || window.innerWidth;
-    const h = this.host.clientHeight || window.innerHeight;
-    // 레트로 느낌: 낮은 해상도로 그리고 픽셀 그대로 키운다
-    this.renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 2) * 0.42);
-    this.renderer.setSize(w, h, false);
-    this.camera.aspect = w / h;
-    this.camera.updateProjectionMatrix();
+    this.cssW = this.host.clientWidth || window.innerWidth;
+    this.cssH = this.host.clientHeight || window.innerHeight;
+    this.dpr = Math.min(window.devicePixelRatio || 1, 3);
+    // 폰 화면에 약 8~9칸이 보이도록 도트 크기를 정한다 (정수 배율 → 또렷한 도트)
+    this.P = Math.max(2, Math.min(4, Math.round(this.cssW / (8.5 * U))));
+    this.canvas.width = Math.round(this.cssW * this.dpr);
+    this.canvas.height = Math.round(this.cssH * this.dpr);
+    const mr = 96;
+    this.mini.width = mr * this.dpr;
+    this.mini.height = mr * this.dpr;
   }
 
-  private collide(x: number, z: number, r = 0.45): [number, number] {
+  private collide(x: number, z: number, r = 0.38): [number, number] {
     for (const c of this.colliders) {
       const cx = Math.max(c.minX, Math.min(x, c.maxX));
       const cz = Math.max(c.minZ, Math.min(z, c.maxZ));
@@ -461,7 +333,6 @@ export class World {
       const d = Math.hypot(dx, dz);
       if (d < r) {
         if (d === 0) {
-          // 안쪽에 들어간 경우 가장 가까운 면으로
           const pushes = [c.minX - r - x, c.maxX + r - x, c.minZ - r - z, c.maxZ + r - z];
           const abs = pushes.map(Math.abs);
           const k = abs.indexOf(Math.min(...abs));
@@ -487,76 +358,44 @@ export class World {
     if (this.keys.has('a') || this.keys.has('arrowleft')) mx -= 1;
     if (this.keys.has('d') || this.keys.has('arrowright')) mx += 1;
     const len = Math.hypot(mx, mz);
-    const p = this.player.root.position;
-    if (len > 0.08) {
-      const sp = 7 * Math.min(1, len);
-      const nx = p.x + (mx / Math.max(1, len)) * sp * dt;
-      const nz = p.z + (mz / Math.max(1, len)) * sp * dt;
-      const [cx, cz] = this.collide(nx, nz);
-      p.x = cx;
-      p.z = cz;
-      const target = Math.atan2(mx, mz);
-      let diff = target - this.heading;
-      while (diff > Math.PI) diff -= Math.PI * 2;
-      while (diff < -Math.PI) diff += Math.PI * 2;
-      this.heading += diff * Math.min(1, dt * 12);
-      this.player.root.rotation.y = this.heading;
-      animateWalk(this.player, this.t, len);
-    } else animateWalk(this.player, 0, 0);
-
-    // 카메라
-    const camTarget = new THREE.Vector3(p.x, 11, p.z + 12);
-    this.camera.position.lerp(camTarget, Math.min(1, dt * 5));
-    this.camera.lookAt(p.x, 1.2, p.z);
-    for (const f of this.fadeables) {
-      const hide = p.z < f.minZ && this.camera.position.z > f.minZ - 0.5 && p.x > f.minX - 1.5 && p.x < f.maxX + 1.5;
-      if (hide === f.faded) continue;
-      f.faded = hide;
-      for (const m of f.meshes) {
-        const mt = m.material as THREE.MeshLambertMaterial;
-        mt.transparent = hide;
-        mt.opacity = hide ? 0.15 : 1;
-        mt.depthWrite = !hide;
-        mt.needsUpdate = true;
-        m.castShadow = !hide;
-      }
-      if (f.sign) f.sign.visible = !hide;
+    this.moving = len > 0.15;
+    if (this.moving) {
+      const sp = SPEED * Math.min(1, len);
+      const [cx, cz] = this.collide(this.px + (mx / Math.max(1, len)) * sp * dt, this.pz + (mz / Math.max(1, len)) * sp * dt);
+      this.px = cx;
+      this.pz = cz;
+      this.dir = dirOf(mx, mz, this.dir);
     }
 
     // NPC
     for (const n of this.npcs) {
-      if (n.def.patrol) {
-        const [a, b] = n.def.patrol;
-        const to = n.dir > 0 ? b : a;
-        const dx = to[0] - n.rig.root.position.x;
-        const dz = to[1] - n.rig.root.position.z;
-        const d = Math.hypot(dx, dz);
-        if (d < 0.3) n.dir *= -1;
-        else {
-          n.rig.root.position.x += (dx / d) * 2.2 * dt;
-          n.rig.root.position.z += (dz / d) * 2.2 * dt;
-          n.rig.root.rotation.y = Math.atan2(dx, dz);
-          animateWalk(n.rig, this.t + n.def.x, 0.6);
-        }
-        // 부딪침 → 돌발 만남
-        if (!s.dayFlags.includes(`enc:${n.def.id}`) && Math.hypot(p.x - n.rig.root.position.x, p.z - n.rig.root.position.z) < 1.3) {
-          this.encounter(n.def.id);
-          return;
-        }
+      if (!n.def.patrol) continue;
+      const [a, b] = n.def.patrol;
+      const to = n.fwd ? b : a;
+      const dx = to[0] - n.x;
+      const dz = to[1] - n.z;
+      const d = Math.hypot(dx, dz);
+      if (d < 0.3) n.fwd = !n.fwd;
+      else {
+        n.x += (dx / d) * 2.2 * dt;
+        n.z += (dz / d) * 2.2 * dt;
+        n.moving = true;
+        if (Math.abs(dx) > Math.abs(dz)) n.dir = dx < 0 ? 2 : 3;
+        else n.dir = dz < 0 ? 1 : 0;
       }
-      if (n.marker) {
-        n.marker.position.y = 3.5 + Math.sin(this.t * 3) * 0.15;
-        n.marker.visible = this.markerVisible(n.def);
+      // 부딪침 → 돌발 만남
+      if (!s.dayFlags.includes(`enc:${n.def.id}`) && Math.hypot(this.px - n.x, this.pz - n.z) < 1.1) {
+        this.encounter(n.def.id);
+        return;
       }
     }
-    this.cats.forEach((c, i) => (c.rotation.y = Math.sin(this.t + i) * 0.6));
 
     // 상호작용 대상
     let best: Interactable | null = null;
-    let bestD = 2.6;
+    let bestD = 2.2;
     for (const it of this.interactables) {
       if (!it.visible()) continue;
-      const d = Math.hypot(p.x - it.x, p.z - it.z);
+      const d = Math.hypot(this.px - it.x, this.pz - it.z);
       if (d < bestD) {
         bestD = d;
         best = it;
@@ -569,13 +408,14 @@ export class World {
     }
 
     // 출근 체크
-    if (!s.dayFlags.includes('commute') && !s.dayFlags.includes('late') && Math.hypot(p.x - OFFICE_DOOR[0], p.z - OFFICE_DOOR[1]) < 4) {
+    if (!s.dayFlags.includes('commute') && !s.dayFlags.includes('late') && Math.hypot(this.px - OFFICE_DOOR[0], this.pz - OFFICE_DOOR[1]) < 4) {
       if (s.clock <= 9 * 60) {
         s.dayFlags.push('commute');
         this.reward(3000, 20, '⏰ 지각 없이 출근 완료!');
       } else {
         s.dayFlags.push('late');
         toast('😰 지각이다... 팀장 눈치가 보인다', 'bad');
+        this.refreshHud();
       }
     }
 
@@ -590,36 +430,327 @@ export class World {
         this.nextDay(60);
         return;
       }
-      s.pos = [Math.round(p.x * 10) / 10, Math.round(p.z * 10) / 10];
+      s.pos = [Math.round(this.px * 10) / 10, Math.round(this.pz * 10) / 10];
       this.refreshHud();
     }
-    this.updateSky(s.clock);
+    this.miniAcc += dt;
+    if (this.miniAcc > 0.2) {
+      this.miniAcc = 0;
+      this.drawMini();
+    }
   }
 
-  private updateSky(clock: number) {
-    const h = clock / 60;
-    const day = new THREE.Color('#9fd3ff');
-    const eve = new THREE.Color('#ffb48a');
-    const night = new THREE.Color('#1d2147');
-    let c: THREE.Color;
-    let light: number;
-    if (h < 16) {
-      c = day;
-      light = 1.1;
-    } else if (h < 19) {
-      c = day.clone().lerp(eve, (h - 16) / 3);
-      light = 1.1 - (h - 16) * 0.12;
-    } else if (h < 21) {
-      c = eve.clone().lerp(night, (h - 19) / 2);
-      light = 0.74 - (h - 19) * 0.22;
-    } else {
-      c = night;
-      light = 0.3;
+  // ---------- 그리기 ----------
+  private draw() {
+    const g = this.g;
+    const s = this.hooks.save();
+    const k = this.P * this.dpr;
+    const viewW = this.cssW / this.P;
+    const viewH = this.cssH / this.P;
+    // 화면 위쪽은 HUD가 가리므로 캐릭터를 조금 아래에 둔다
+    let camX = ax(this.px) - viewW / 2;
+    let camY = ax(this.pz) - viewH * 0.55;
+    camX = Math.round(Math.max(0, Math.min(MAP_PX - viewW, camX)));
+    camY = Math.round(Math.max(0, Math.min(MAP_PX - viewH, camY)));
+    g.setTransform(1, 0, 0, 1, 0, 0);
+    g.fillStyle = '#3b8fd0';
+    g.fillRect(0, 0, this.canvas.width, this.canvas.height);
+    g.setTransform(k, 0, 0, k, -camX * k, -camY * k);
+    g.imageSmoothingEnabled = false;
+    g.drawImage(this.map, 0, 0);
+
+    // y 순서대로 그릴 것들
+    const items: { y: number; draw: () => void }[] = [];
+    const frame = Math.floor(this.t * 8) % 2;
+    items.push({ y: ax(this.pz), draw: () => drawCharacter(g, s.look, ax(this.px), ax(this.pz), this.dir, frame, this.moving) });
+    for (const n of this.npcs) {
+      const look = { ...DEFAULT_LOOK, ...n.def.look };
+      items.push({ y: ax(n.z), draw: () => drawCharacter(g, look, ax(n.x), ax(n.z), n.dir, Math.floor((this.t + n.def.x) * 6) % 2, n.moving) });
     }
-    this.scene.background = c;
-    (this.scene.fog as THREE.Fog).color = c;
-    this.sun.intensity = light;
-    this.hemi.intensity = 0.5 + light * 0.4;
+    for (const [x, z] of TREES) items.push({ y: ax(z), draw: () => this.drawTree(ax(x), ax(z)) });
+    for (const [x, z] of LAMPS) items.push({ y: ax(z), draw: () => this.drawLamp(ax(x), ax(z)) });
+    CATS.forEach(([x, z], i) => {
+      if (!s.flags.includes(`cat:${i}`)) items.push({ y: ax(z), draw: () => this.drawCat(ax(x), ax(z), i) });
+    });
+    if (this.walletVisible()) items.push({ y: ax(WALLET_POS[1]), draw: () => this.drawWallet(ax(WALLET_POS[0]), ax(WALLET_POS[1])) });
+    items.sort((a, b) => a.y - b.y);
+    for (const it of items) it.draw();
+
+    // 밤
+    g.setTransform(1, 0, 0, 1, 0, 0);
+    const dark = this.darkness(s.clock);
+    if (dark > 0) {
+      g.fillStyle = `rgba(18,16,60,${dark})`;
+      g.fillRect(0, 0, this.canvas.width, this.canvas.height);
+      g.globalCompositeOperation = 'lighter';
+      const lights: [number, number][] = [...LAMPS];
+      for (const p of PLACES) {
+        const r = placeRect(p);
+        lights.push([p.x, doorSide(p) === 'north' ? r.minZ - 0.5 : r.maxZ + 0.5]);
+      }
+      for (const [x, z] of lights) {
+        const sx = (ax(x) - camX) * k;
+        const sy = (ax(z) - camY) * k;
+        const rad = 3.2 * U * k;
+        if (sx < -rad || sy < -rad || sx > this.canvas.width + rad || sy > this.canvas.height + rad) continue;
+        const gr = g.createRadialGradient(sx, sy, 0, sx, sy, rad);
+        gr.addColorStop(0, `rgba(255,214,140,${dark * 0.9})`);
+        gr.addColorStop(1, 'rgba(255,214,140,0)');
+        g.fillStyle = gr;
+        g.fillRect(sx - rad, sy - rad, rad * 2, rad * 2);
+      }
+      g.globalCompositeOperation = 'source-over';
+    }
+
+    // 글자 (선명하게 CSS 픽셀 단위로)
+    g.setTransform(this.dpr, 0, 0, this.dpr, 0, 0);
+    const toScreen = (x: number, z: number): [number, number] => [(ax(x) - camX) * this.P, (ax(z) - camY) * this.P];
+    for (const p of PLACES) {
+      const r = placeRect(p);
+      const [sx, sy] = toScreen(p.x, r.minZ + 0.6);
+      this.label(p.sign ?? `🏢 ${p.name}`, sx, sy, '#fff', 'rgba(35,25,74,.85)', 13);
+    }
+    for (const n of this.npcs) {
+      const [sx, sy] = toScreen(n.x, n.z);
+      const head = sy - 19 * this.P;
+      if (n.def.kind !== 'encounter' || Math.hypot(n.x - this.px, n.z - this.pz) < 6) this.label(n.def.name.split(' ')[0], sx, head - 4, '#fff', 'rgba(20,12,45,.7)', 11);
+      if (this.markerVisible(n.def)) {
+        const bob = Math.sin(this.t * 4) * 3;
+        this.label(n.def.kind === 'shop' ? '🛒' : n.def.kind === 'mission' ? '🎯' : '❗', sx, head - 24 + bob, '#23194a', '#ffd166', 14);
+      }
+    }
+    const [hx, hy] = toScreen(BED_POS[0], BED_POS[1]);
+    if (s.clock >= 21 * 60) this.label('🛏️ 여기서 자기', hx, hy - 10 + Math.sin(this.t * 4) * 3, '#23194a', '#ffd166', 12);
+    this.drawGoalArrow(toScreen);
+  }
+
+  private label(text: string, x: number, y: number, color: string, bg: string, size: number) {
+    const g = this.g;
+    g.font = `800 ${size}px Pretendard, 'Apple SD Gothic Neo', 'Noto Sans KR', sans-serif`;
+    const w = g.measureText(text).width + 10;
+    const h = size + 8;
+    if (x + w / 2 < 0 || x - w / 2 > this.cssW || y < -h || y > this.cssH + h) return;
+    g.fillStyle = bg;
+    g.fillRect(Math.round(x - w / 2), Math.round(y - h), Math.round(w), h);
+    g.fillStyle = 'rgba(0,0,0,.25)';
+    g.fillRect(Math.round(x - w / 2), Math.round(y), Math.round(w), 2);
+    g.fillStyle = color;
+    g.textAlign = 'center';
+    g.textBaseline = 'middle';
+    g.fillText(text, x, y - h / 2 + 1);
+  }
+
+  /** 목적지가 화면 밖이면 가장자리에 화살표 */
+  private drawGoalArrow(toScreen: (x: number, z: number) => [number, number]) {
+    const t = this.target();
+    if (!t) return;
+    const [sx, sy] = toScreen(t.x, t.z);
+    const top = 190;
+    const bottom = this.cssH - 170;
+    const m = 28;
+    if (sx > m && sx < this.cssW - m && sy > top && sy < bottom) {
+      this.label('⬇', sx, sy - 22 * this.P - 26 + Math.sin(this.t * 5) * 4, '#fff', '#ff4f6d', 14);
+      return;
+    }
+    const [px, py] = toScreen(this.px, this.pz);
+    const ang = Math.atan2(sy - py, sx - px);
+    const cx = Math.max(m, Math.min(this.cssW - m, px + Math.cos(ang) * 1000));
+    const cy = Math.max(top, Math.min(bottom, py + Math.sin(ang) * 1000));
+    // 가장자리 교점 근사
+    const tx = Math.cos(ang) === 0 ? Infinity : ((Math.cos(ang) > 0 ? this.cssW - m : m) - px) / Math.cos(ang);
+    const ty = Math.sin(ang) === 0 ? Infinity : ((Math.sin(ang) > 0 ? bottom : top) - py) / Math.sin(ang);
+    const tt = Math.min(Math.abs(tx), Math.abs(ty));
+    const ex = isFinite(tt) ? px + Math.cos(ang) * tt : cx;
+    const ey = isFinite(tt) ? py + Math.sin(ang) * tt : cy;
+    const g = this.g;
+    g.save();
+    g.translate(ex, ey);
+    g.rotate(ang);
+    g.fillStyle = '#ff4f6d';
+    g.strokeStyle = '#fff';
+    g.lineWidth = 3;
+    g.beginPath();
+    g.moveTo(16, 0);
+    g.lineTo(-10, -12);
+    g.lineTo(-4, 0);
+    g.lineTo(-10, 12);
+    g.closePath();
+    g.stroke();
+    g.fill();
+    g.restore();
+    const dist = Math.round(Math.hypot(t.x - this.px, t.z - this.pz));
+    this.label(`${t.icon} ${dist}m`, ex - Math.cos(ang) * 34, ey - Math.sin(ang) * 26 + 10, '#fff', 'rgba(20,12,45,.8)', 11);
+  }
+
+  private darkness(clock: number) {
+    const h = clock / 60;
+    if (h < 17) return 0;
+    if (h < 19) return ((h - 17) / 2) * 0.25;
+    if (h < 21) return 0.25 + ((h - 19) / 2) * 0.3;
+    return 0.55;
+  }
+
+  private drawTree(x: number, y: number) {
+    const g = this.g;
+    g.fillStyle = 'rgba(0,0,0,.22)';
+    g.fillRect(x - 9, y - 1, 18, 4);
+    g.fillStyle = '#7a5230';
+    g.fillRect(x - 2, y - 8, 4, 9);
+    const c = (cx: number, cy: number, r: number, col: string) => {
+      g.fillStyle = col;
+      g.fillRect(x + cx - r, y + cy - r + 2, r * 2, r * 2 - 4);
+      g.fillRect(x + cx - r + 2, y + cy - r, r * 2 - 4, r * 2);
+    };
+    c(0, -16, 10, '#2f7a3c');
+    c(-1, -18, 8, '#3f9a4a');
+    c(-3, -21, 4, '#5fbf5f');
+  }
+
+  private drawLamp(x: number, y: number) {
+    const g = this.g;
+    g.fillStyle = 'rgba(0,0,0,.2)';
+    g.fillRect(x - 3, y, 6, 2);
+    g.fillStyle = '#555';
+    g.fillRect(x - 1, y - 26, 2, 27);
+    g.fillStyle = '#333';
+    g.fillRect(x - 4, y - 29, 8, 3);
+    g.fillStyle = '#ffe9a8';
+    g.fillRect(x - 3, y - 26, 6, 2);
+  }
+
+  private drawCat(x: number, y: number, i: number) {
+    const g = this.g;
+    const col = ['#f4a259', '#333', '#ddd'][i];
+    const tail = Math.floor(this.t * 3 + i) % 2;
+    g.fillStyle = 'rgba(0,0,0,.2)';
+    g.fillRect(x - 5, y, 10, 2);
+    g.fillStyle = col;
+    g.fillRect(x - 5, y - 5, 8, 5);
+    g.fillRect(x + 2, y - 8, 5, 5);
+    g.fillRect(x + 2, y - 10, 1, 2);
+    g.fillRect(x + 6, y - 10, 1, 2);
+    g.fillRect(x - 7, y - 7 - tail, 2, 4);
+    g.fillStyle = '#111';
+    g.fillRect(x + 3, y - 6, 1, 1);
+    g.fillRect(x + 5, y - 6, 1, 1);
+  }
+
+  private drawWallet(x: number, y: number) {
+    const g = this.g;
+    g.fillStyle = '#8b2e2e';
+    g.fillRect(x - 4, y - 3, 8, 5);
+    g.fillStyle = '#b04545';
+    g.fillRect(x - 4, y - 3, 8, 1);
+    if (Math.floor(this.t * 3) % 2) {
+      g.fillStyle = '#fff6b0';
+      g.fillRect(x + 4, y - 7, 1, 3);
+      g.fillRect(x + 3, y - 6, 3, 1);
+    }
+  }
+
+  // ---------- 지도 ----------
+  private drawMini() {
+    if (!this.mini) return;
+    const g = this.mini.getContext('2d')!;
+    const W = this.mini.width;
+    // 플레이어 주변 40칸을 보여 준다
+    const span = 40 * U;
+    let sx = ax(this.px) - span / 2;
+    let sy = ax(this.pz) - span / 2;
+    sx = Math.max(0, Math.min(MAP_PX - span, sx));
+    sy = Math.max(0, Math.min(MAP_PX - span, sy));
+    g.imageSmoothingEnabled = true;
+    g.drawImage(this.map, sx, sy, span, span, 0, 0, W, W);
+    const f = W / span;
+    const dot = (x: number, z: number, col: string, r: number) => {
+      g.fillStyle = col;
+      g.beginPath();
+      g.arc((ax(x) - sx) * f, (ax(z) - sy) * f, r, 0, Math.PI * 2);
+      g.fill();
+    };
+    const t = this.target();
+    const r = W / 40;
+    if (t) {
+      dot(t.x, t.z, '#fff', r * 2.2);
+      dot(t.x, t.z, '#ff4f6d', r * 1.6);
+    }
+    dot(this.px, this.pz, '#fff', r * 1.8);
+    dot(this.px, this.pz, '#4f6dff', r * 1.2);
+  }
+
+  private openMap() {
+    const s = this.hooks.save();
+    this.pause(true);
+    const m = modal(`<h3>🗺️ 동네 지도</h3>
+      <div class="bigmap"><canvas id="bigmap"></canvas></div>
+      <div class="map-legend"><span><i style="background:#4f6dff"></i>나</span><span><i style="background:#ff4f6d"></i>지금 목표</span><span>🎯 미션</span><span>❗ 퀘스트</span><span>🛒 상점</span><span>🛏️ 잠자는 곳</span></div>
+      <button class="btn primary" id="ok">닫기</button>`);
+    const cv = m.querySelector('#bigmap') as HTMLCanvasElement;
+    const css = Math.min(440, window.innerWidth - 32);
+    const dpr = Math.min(window.devicePixelRatio || 1, 3);
+    cv.width = css * dpr;
+    cv.height = css * dpr;
+    cv.style.width = `${css}px`;
+    cv.style.height = `${css}px`;
+    const g = cv.getContext('2d')!;
+    // 강 아래쪽(-50~-40)도 포함해 전체를 그린다
+    g.drawImage(this.map, 0, 0, MAP_PX, MAP_PX, 0, 0, cv.width, cv.height);
+    g.setTransform(dpr, 0, 0, dpr, 0, 0);
+    const f = css / MAP_PX;
+    const P = (x: number, z: number): [number, number] => [ax(x) * f, ax(z) * f];
+    const tag = (text: string, x: number, y: number, bg = 'rgba(35,25,74,.85)', fg = '#fff', size = 11) => {
+      g.font = `800 ${size}px Pretendard, 'Apple SD Gothic Neo', 'Noto Sans KR', sans-serif`;
+      const w = g.measureText(text).width + 8;
+      const bx = Math.max(2, Math.min(css - w - 2, x - w / 2));
+      g.fillStyle = bg;
+      g.fillRect(bx, y - size / 2 - 3, w, size + 6);
+      g.fillStyle = fg;
+      g.textAlign = 'left';
+      g.textBaseline = 'middle';
+      g.fillText(text, bx + 4, y + 1);
+    };
+    for (const p of PLACES) {
+      const [x, y] = P(p.x, p.z);
+      tag(p.name, x, y);
+    }
+    const [px0, py0] = P(-27, -24);
+    tag('🌳 공원', px0, py0 - 22, 'rgba(47,122,60,.85)');
+    const [rx, ry] = P(0, -45);
+    tag('🌊 강', rx + 60, ry, 'rgba(30,90,160,.85)');
+    for (const n of NPCS) {
+      if (n.kind === 'encounter') continue;
+      if (n.kind === 'mission' && !this.markerVisible(n)) continue;
+      if (n.kind === 'quest' && !s.flags.includes('wallet:have') && s.flags.includes('wallet:done')) continue;
+      const [x, y] = P(n.x, n.z);
+      const icon = n.kind === 'shop' ? '🛒' : n.kind === 'mission' ? '🎯' : '❗';
+      const extra = n.missionId ? ` ${clockText(MISSION_TIME[n.missionId])}` : '';
+      tag(`${icon}${extra}`, x, y + 16, '#ffd166', '#23194a', 11);
+    }
+    const [bx, by] = P(BED_POS[0], BED_POS[1]);
+    tag('🛏️', bx - 18, by, '#ffd166', '#23194a', 11);
+    const t = this.target();
+    if (t) {
+      const [x, y] = P(t.x, t.z);
+      g.strokeStyle = '#ff4f6d';
+      g.lineWidth = 3;
+      g.beginPath();
+      g.arc(x, y, 9, 0, Math.PI * 2);
+      g.stroke();
+    }
+    const [mx, my] = P(this.px, this.pz);
+    g.fillStyle = '#fff';
+    g.beginPath();
+    g.arc(mx, my, 7, 0, Math.PI * 2);
+    g.fill();
+    g.fillStyle = '#4f6dff';
+    g.beginPath();
+    g.arc(mx, my, 5, 0, Math.PI * 2);
+    g.fill();
+    tag('나', mx, my - 14, '#4f6dff');
+    (m.querySelector('#ok') as HTMLButtonElement).onclick = () => {
+      m.remove();
+      this.pause(false);
+    };
   }
 
   private markerVisible(def: NpcDef): boolean {
@@ -729,7 +860,7 @@ export class World {
         const c = shuffled[+b.dataset.i!];
         m.remove();
         this.hooks.setBattery(Math.max(0, Math.min(100, this.hooks.battery() + c.battery)));
-        this.dialog(e.title.split(' ')[0], c.reaction, () => {
+        this.dialog(NPCS.find((x) => x.id === npcId)?.name ?? e.title, c.reaction, () => {
           if (c.xp || c.money) this.reward(c.money, c.xp, '💥 돌발 만남 해결!');
           else this.refreshHud();
         });
@@ -739,7 +870,6 @@ export class World {
 
   private petCat(i: number) {
     const s = this.hooks.save();
-    this.cats[i].visible = false;
     s.flags.push(`cat:${i}`);
     const n = s.flags.filter((f) => f.startsWith('cat:')).length;
     if (n >= CATS.length && !s.flags.includes('cats:done')) {
@@ -766,8 +896,8 @@ export class World {
     s.day += 1;
     s.clock = 8 * 60;
     s.dayFlags = [];
-    s.pos = [-24, 13];
-    this.player.root.position.set(-24, 0, 13);
+    s.pos = [...HOME_START];
+    [this.px, this.pz] = HOME_START;
     this.hooks.setBattery(battery);
     this.hooks.persist();
     this.pause(true);
@@ -827,6 +957,7 @@ export class World {
             <span class="si-price">${owned ? '보유' : locked ? `Lv.${it.minLevel}` : won(it.price)}</span></button>`;
         }).join('')}</div>
         <div class="stack"><button class="btn" id="ward">👕 옷장 열기</button><button class="btn primary" id="ok">나가기</button></div>`;
+      this.preview(box);
       box.querySelectorAll<HTMLButtonElement>('.shop-item').forEach((b) =>
         (b.onclick = () => {
           const it = SHOP.find((x) => x.id === b.dataset.id)!;
@@ -859,10 +990,21 @@ export class World {
     render();
   }
 
+  /** 지금 입은 모습을 창 위쪽에 보여 준다 */
+  private preview(root: HTMLElement) {
+    root.querySelector('.look-preview')?.remove();
+    const wrap = document.createElement('div');
+    wrap.className = 'look-preview';
+    const c = lookPreview(this.hooks.save().look, 5);
+    c.style.width = '80px';
+    c.style.height = '110px';
+    wrap.appendChild(c);
+    root.querySelector('h3')!.after(wrap);
+  }
+
   private equip(it: ShopItem) {
     const s = this.hooks.save();
     s.look = { ...s.look, ...it.apply };
-    applyLook(this.player, s.look);
     this.hooks.persist();
   }
 
@@ -873,20 +1015,22 @@ export class World {
     const m = modal(`<h3>👕 옷장</h3>
       ${all.length ? `<div class="shop">${all.map((it) => `<button class="shop-item" data-id="${it.id}"><span class="si-icon">${it.icon}</span><span class="si-name">${esc(it.name)}</span><span class="si-price">입기</span></button>`).join('')}</div>` : '<p class="muted">아직 산 옷이 없어요. 편의점·옷가게에서 사 보세요.</p>'}
       <div class="stack"><button class="btn" id="reset">기본 옷으로</button><button class="btn" id="hat">모자·안경 벗기</button><button class="btn primary" id="ok">닫기</button></div>`);
+    this.preview(m);
     m.querySelectorAll<HTMLButtonElement>('.shop-item').forEach((b) =>
       (b.onclick = () => {
         this.equip(all.find((x) => x.id === b.dataset.id)!);
+        this.preview(m);
         toast('갈아입었다!', 'good');
       }),
     );
     (m.querySelector('#reset') as HTMLButtonElement).onclick = () => {
       s.look = { ...DEFAULT_LOOK };
-      applyLook(this.player, s.look);
+      this.preview(m);
       this.hooks.persist();
     };
     (m.querySelector('#hat') as HTMLButtonElement).onclick = () => {
       s.look = { ...s.look, hat: null, glasses: null };
-      applyLook(this.player, s.look);
+      this.preview(m);
       this.hooks.persist();
     };
     (m.querySelector('#ok') as HTMLButtonElement).onclick = () => {

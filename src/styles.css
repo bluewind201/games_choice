@@ -277,3 +277,13 @@ select { font: inherit; padding: 12px; border-radius: 12px; border: 1px solid va
 .si-icon { font-size: 28px; line-height: 1; }
 .si-name { font-size: 13px; font-weight: 600; word-break: keep-all; line-height: 1.3; }
 .si-price { font-size: 13px; font-weight: 800; color: var(--primary); }
+.hud-mini { position: absolute; left: 10px; top: calc(env(safe-area-inset-top, 0px) + 140px); width: 100px; padding: 0; border: 2px solid #fff; border-radius: 6px; background: rgba(20, 12, 45, .78); box-shadow: 3px 3px 0 rgba(0, 0, 0, .35); overflow: hidden; display: flex; flex-direction: column; }
+.hud-mini canvas { width: 96px; height: 96px; display: block; }
+.hud-mini span { font-size: 11px; color: #fff; padding: 3px 0; text-align: center; }
+.hud-mini:active { transform: translate(2px, 2px); }
+.bigmap { display: flex; justify-content: center; margin: 4px 0 10px; }
+.bigmap canvas { border-radius: 8px; border: 2px solid var(--ink); image-rendering: auto; }
+.map-legend { display: flex; flex-wrap: wrap; gap: 6px 12px; font-size: 13px; color: var(--muted); margin-bottom: 4px; }
+.map-legend i { display: inline-block; width: 10px; height: 10px; border-radius: 50%; margin-right: 4px; vertical-align: -1px; }
+.look-preview { display: flex; justify-content: center; margin: 4px 0; }
+.look-preview canvas { image-rendering: pixelated; background: #efe8ff; border-radius: 12px; }

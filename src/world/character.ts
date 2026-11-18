@@ -1,5 +1,4 @@
-// 블록형 레트로 3D 캐릭터. 파츠를 조합하고 색을 바꿔 꾸민다.
-import * as THREE from 'three';
+// 2D 도트 캐릭터. 색과 파츠를 바꿔 꾸민다. 1칸 = 16 도트, 캐릭터는 12x18 도트.
 
 export interface Look {
   skin: string;
@@ -14,137 +13,129 @@ export interface Look {
 
 export const DEFAULT_LOOK: Look = { skin: '#f2c9a0', hair: '#2b2118', shirt: '#4f6dff', pants: '#2d3047', hat: null, glasses: null, bag: false };
 
-const mat = (c: string) => new THREE.MeshLambertMaterial({ color: new THREE.Color(c), flatShading: true });
-const box = (w: number, h: number, d: number, c: string) => new THREE.Mesh(new THREE.BoxGeometry(w, h, d), mat(c));
+/** 0 아래, 1 위, 2 왼쪽, 3 오른쪽 */
+export type Dir = 0 | 1 | 2 | 3;
 
-export interface CharRig {
-  root: THREE.Group;
-  parts: { body: THREE.Mesh; head: THREE.Group; armL: THREE.Group; armR: THREE.Group; legL: THREE.Group; legR: THREE.Group; acc: THREE.Group };
-  look: Look;
+export function dirOf(mx: number, mz: number, prev: Dir): Dir {
+  if (Math.abs(mx) < 0.05 && Math.abs(mz) < 0.05) return prev;
+  if (Math.abs(mx) > Math.abs(mz)) return mx < 0 ? 2 : 3;
+  return mz < 0 ? 1 : 0;
 }
 
-function limb(w: number, h: number, c: string, y: number, x: number): THREE.Group {
-  const g = new THREE.Group();
-  const m = box(w, h, w, c);
-  m.position.y = -h / 2;
-  g.add(m);
-  g.position.set(x, y, 0);
-  return g;
+function shade(hex: string, k: number): string {
+  const n = parseInt(hex.slice(1), 16);
+  const f = (v: number) => Math.max(0, Math.min(255, Math.round(v * k)));
+  return `rgb(${f((n >> 16) & 255)},${f((n >> 8) & 255)},${f(n & 255)})`;
 }
 
-export function buildCharacter(look: Look = DEFAULT_LOOK): CharRig {
-  const root = new THREE.Group();
-  const body = box(0.7, 0.75, 0.42, look.shirt);
-  body.position.y = 1.15;
-  const head = new THREE.Group();
-  const face = box(0.6, 0.6, 0.55, look.skin);
-  head.add(face);
-  const hair = box(0.64, 0.2, 0.6, look.hair);
-  hair.position.set(0, 0.25, -0.02);
-  head.add(hair);
-  const back = box(0.64, 0.45, 0.12, look.hair);
-  back.position.set(0, 0.05, -0.27);
-  head.add(back);
-  const eyeL = box(0.08, 0.1, 0.02, '#1a1a1a');
-  eyeL.position.set(-0.13, 0.02, 0.28);
-  const eyeR = eyeL.clone();
-  eyeR.position.x = 0.13;
-  head.add(eyeL, eyeR);
-  head.position.y = 1.85;
-  const armL = limb(0.2, 0.7, look.shirt, 1.5, -0.47);
-  const armR = limb(0.2, 0.7, look.shirt, 1.5, 0.47);
-  // 손
-  [armL, armR].forEach((a) => {
-    const hand = box(0.18, 0.15, 0.18, look.skin);
-    hand.position.y = -0.75;
-    a.add(hand);
-  });
-  const legL = limb(0.26, 0.78, look.pants, 0.78, -0.18);
-  const legR = limb(0.26, 0.78, look.pants, 0.78, 0.18);
-  const acc = new THREE.Group();
-  root.add(body, head, armL, armR, legL, legR, acc);
-  root.traverse((o) => {
-    if ((o as THREE.Mesh).isMesh) (o as THREE.Mesh).castShadow = true;
-  });
-  const rig: CharRig = { root, parts: { body, head, armL, armR, legL, legR, acc }, look: { ...look } };
-  applyLook(rig, look);
-  return rig;
-}
-
-function setColor(o: THREE.Object3D, c: string) {
-  const m = (o as THREE.Mesh).material as THREE.MeshLambertMaterial;
-  m.color.set(c);
-}
-
-export function applyLook(rig: CharRig, look: Look) {
-  rig.look = { ...look };
-  const { body, head, armL, armR, legL, legR } = rig.parts;
-  setColor(body, look.shirt);
-  setColor(head.children[0], look.skin);
-  setColor(head.children[1], look.hair);
-  setColor(head.children[2], look.hair);
-  setColor(armL.children[0], look.shirt);
-  setColor(armR.children[0], look.shirt);
-  setColor(armL.children[1], look.skin);
-  setColor(armR.children[1], look.skin);
-  setColor(legL.children[0], look.pants);
-  setColor(legR.children[0], look.pants);
-
-  // 액세서리 다시 만들기
-  const headAcc = head.getObjectByName('acc');
-  if (headAcc) head.remove(headAcc);
-  const ha = new THREE.Group();
-  ha.name = 'acc';
+/**
+ * (x, y) = 발 아래 가운데 (도트 좌표). frame 0/1 = 걷기 프레임, moving=false면 서 있음.
+ */
+export function drawCharacter(g: CanvasRenderingContext2D, look: Look, x: number, y: number, dir: Dir, frame: number, moving: boolean) {
+  const X = Math.round(x) - 6;
+  const Y = Math.round(y) - 18;
+  const r = (px: number, py: number, w: number, h: number, c: string) => {
+    g.fillStyle = c;
+    g.fillRect(X + px, Y + py, w, h);
+  };
+  const step = moving ? (frame ? 1 : -1) : 0;
+  const bob = moving && frame ? 1 : 0;
+  // 그림자
+  g.fillStyle = 'rgba(0,0,0,.25)';
+  g.fillRect(X + 2, Y + 17, 8, 2);
+  g.fillRect(X + 1, Y + 17.5, 10, 1);
+  const dark = shade(look.pants, 0.7);
+  // 다리
+  if (dir === 2 || dir === 3) {
+    r(4 + step, 13, 3, 5, look.pants);
+    r(5 - step, 13, 3, 5, dark);
+    r(4 + step, 17, 3, 1, '#222');
+  } else {
+    r(3, 13 - (step > 0 ? 1 : 0), 3, 5, look.pants);
+    r(6, 13 - (step < 0 ? 1 : 0), 3, 5, look.pants);
+    r(3, 17 - (step > 0 ? 1 : 0), 3, 1, '#222');
+    r(6, 17 - (step < 0 ? 1 : 0), 3, 1, '#222');
+  }
+  const by = bob;
+  // 가방 (등 뒤: 위를 볼 때 앞에, 옆을 볼 때 옆에)
+  if (look.bag && dir === 0) r(1, 8 - by, 1, 5, '#c66f00');
+  // 몸통
+  r(2, 8 - by, 8, 6, look.shirt);
+  r(2, 13 - by, 8, 1, shade(look.shirt, 0.75));
+  // 팔
+  const armSwing = moving ? step : 0;
+  if (dir === 2 || dir === 3) {
+    r(dir === 2 ? 4 + armSwing : 6 - armSwing, 9 - by, 2, 4, shade(look.shirt, 0.8));
+    r(dir === 2 ? 4 + armSwing : 6 - armSwing, 13 - by, 2, 1, look.skin);
+    if (look.bag) r(dir === 2 ? 8 : 1, 8 - by, 3, 5, '#ff9f1a');
+  } else {
+    r(0, 9 - by + (armSwing > 0 ? 1 : 0), 2, 4, shade(look.shirt, 0.8));
+    r(10, 9 - by + (armSwing < 0 ? 1 : 0), 2, 4, shade(look.shirt, 0.8));
+    r(0, 13 - by + (armSwing > 0 ? 1 : 0), 2, 1, look.skin);
+    r(10, 13 - by + (armSwing < 0 ? 1 : 0), 2, 1, look.skin);
+    if (look.bag && dir === 1) r(3, 8 - by, 6, 5, '#ff9f1a');
+  }
+  // 머리
+  const hy = 1 - by;
+  r(2, hy, 8, 7, look.skin);
+  const hairDark = shade(look.hair, 0.8);
+  if (dir === 1) {
+    r(2, hy, 8, 6, look.hair);
+    r(2, hy + 5, 8, 1, hairDark);
+  } else if (dir === 0) {
+    r(2, hy, 8, 2, look.hair);
+    r(2, hy + 2, 1, 3, look.hair);
+    r(9, hy + 2, 1, 3, look.hair);
+    r(4, hy + 4, 1, 2, '#1a1a1a');
+    r(7, hy + 4, 1, 2, '#1a1a1a');
+    r(5, hy + 6, 2, 1, shade(look.skin, 0.8));
+  } else {
+    const L = dir === 2;
+    r(2, hy, 8, 2, look.hair);
+    r(L ? 7 : 2, hy + 2, 3, 4, look.hair);
+    r(L ? 3 : 8, hy + 4, 1, 2, '#1a1a1a');
+  }
+  // 안경
+  if (look.glasses && dir !== 1) {
+    const c = look.glasses === 'sun' ? '#111' : '#6b3f1f';
+    if (dir === 0) {
+      r(3, hy + 4, 3, 2, c);
+      r(6, hy + 4, 3, 2, c);
+      if (look.glasses === 'round') {
+        r(4, hy + 5, 1, 1, '#cfe8ff');
+        r(7, hy + 5, 1, 1, '#cfe8ff');
+      }
+    } else r(dir === 2 ? 2 : 7, hy + 4, 3, 2, c);
+  }
+  // 모자
   const hc = look.hatColor ?? '#e2445c';
   if (look.hat === 'cap') {
-    const top = box(0.68, 0.18, 0.64, hc);
-    top.position.set(0, 0.36, 0);
-    const brim = box(0.6, 0.05, 0.3, hc);
-    brim.position.set(0, 0.28, 0.42);
-    ha.add(top, brim);
+    r(1, hy - 1, 10, 3, hc);
+    r(1, hy + 1, 10, 1, shade(hc, 0.75));
+    if (dir === 0) r(2, hy + 2, 8, 1, shade(hc, 0.6));
+    if (dir === 2) r(-2, hy + 1, 4, 1, shade(hc, 0.6));
+    if (dir === 3) r(10, hy + 1, 4, 1, shade(hc, 0.6));
   } else if (look.hat === 'beanie') {
-    const b = box(0.7, 0.3, 0.66, hc);
-    b.position.set(0, 0.36, 0);
-    const pom = box(0.14, 0.14, 0.14, '#ffffff');
-    pom.position.set(0, 0.58, 0);
-    ha.add(b, pom);
+    r(1, hy - 2, 10, 4, hc);
+    r(1, hy + 1, 10, 1, shade(hc, 0.7));
+    r(5, hy - 4, 2, 2, '#fff');
   } else if (look.hat === 'catears') {
-    const band = box(0.66, 0.06, 0.12, '#333');
-    band.position.set(0, 0.36, 0);
-    const e1 = new THREE.Mesh(new THREE.ConeGeometry(0.12, 0.25, 4), mat('#333'));
-    e1.position.set(-0.2, 0.5, 0);
-    const e2 = e1.clone();
-    e2.position.x = 0.2;
-    ha.add(band, e1, e2);
-  }
-  if (look.glasses === 'round' || look.glasses === 'sun') {
-    const c = look.glasses === 'sun' ? '#111' : '#5a3b22';
-    const l = box(0.2, 0.16, 0.03, c);
-    l.position.set(-0.13, 0.02, 0.3);
-    const r = l.clone();
-    r.position.x = 0.13;
-    const bridge = box(0.08, 0.03, 0.03, c);
-    bridge.position.set(0, 0.05, 0.3);
-    ha.add(l, r, bridge);
-  }
-  head.add(ha);
-
-  rig.parts.acc.clear();
-  if (look.bag) {
-    const bag = box(0.55, 0.6, 0.25, '#ff9f1a');
-    bag.position.set(0, 1.15, -0.34);
-    rig.parts.acc.add(bag);
+    r(2, hy - 1, 8, 1, '#333');
+    r(2, hy - 3, 2, 2, '#333');
+    r(8, hy - 3, 2, 2, '#333');
+    r(3, hy - 2, 1, 1, '#ff8fab');
+    r(8, hy - 2, 1, 1, '#ff8fab');
   }
 }
 
-/** 걷기 애니메이션 */
-export function animateWalk(rig: CharRig, t: number, speed: number) {
-  const s = Math.min(1, speed);
-  const a = Math.sin(t * 10) * 0.7 * s;
-  rig.parts.armL.rotation.x = a;
-  rig.parts.armR.rotation.x = -a;
-  rig.parts.legL.rotation.x = -a;
-  rig.parts.legR.rotation.x = a;
-  rig.parts.body.position.y = 1.15 + Math.abs(Math.sin(t * 10)) * 0.06 * s;
-  rig.parts.head.position.y = 1.85 + Math.abs(Math.sin(t * 10)) * 0.06 * s;
+/** 상점·옷장에서 쓰는 큰 미리보기 */
+export function lookPreview(look: Look, scale = 5): HTMLCanvasElement {
+  const c = document.createElement('canvas');
+  c.width = 16 * scale;
+  c.height = 22 * scale;
+  const g = c.getContext('2d')!;
+  g.imageSmoothingEnabled = false;
+  g.scale(scale, scale);
+  drawCharacter(g, look, 8, 21, 0, 0, false);
+  return c;
 }
