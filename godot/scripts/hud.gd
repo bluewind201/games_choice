@@ -130,7 +130,7 @@ func _build_bottom() -> void:
 	row.offset_bottom = -6
 	row.alignment = BoxContainer.ALIGNMENT_CENTER
 	root.add_child(row)
-	for b in [["📋퀘스트", open_quests], ["🗺️지도", open_map], ["👕옷장", open_wardrobe], ["🎭성향", func(): Main.inst.screen_persona()],
+	for b in [["📋퀘스트", open_quests], ["🗺️지도", open_map], ["👕옷장", open_wardrobe], ["🎂인생", open_life],
 			["🔊", null]]:
 		var btn := UI.button(b[0], b[1] if b[1] else Callable(), "normal", 11)
 		btn.size_flags_horizontal = Control.SIZE_EXPAND_FILL
@@ -195,6 +195,48 @@ func _draw_joy() -> void:
 	joy_base.draw_circle(c + _joy_vec * r * 0.6, r * 0.38, Color(1, 1, 1, 0.75))
 	joy_base.draw_arc(c + _joy_vec * r * 0.6, r * 0.38, 0, TAU, 24, UI.INK, 2)
 
+## 위험물 근처: 화면 가운데 큰 경고
+func danger_banner(text: String) -> void:
+	var c := UI.full(Control.new())
+	c.mouse_filter = Control.MOUSE_FILTER_STOP
+	Main.inst.overlay_root().add_child(c)
+	var bg := UI.full(UI.color_rect(Color(0.85, 0.1, 0.2, 0.35)))
+	c.add_child(bg)
+	var p := PanelContainer.new()
+	p.add_theme_stylebox_override("panel", UI.box(UI.YELLOW, UI.INK, 4, 14, 4))
+	p.set_anchors_and_offsets_preset(Control.PRESET_CENTER)
+	p.grow_horizontal = Control.GROW_DIRECTION_BOTH
+	p.grow_vertical = Control.GROW_DIRECTION_BOTH
+	c.add_child(p)
+	var l := UI.label(text, 22, UI.INK, HORIZONTAL_ALIGNMENT_CENTER, false)
+	p.add_child(l)
+	await c.get_tree().process_frame
+	p.pivot_offset = p.size / 2
+	p.scale = Vector2(2, 2)
+	var tw := c.create_tween()
+	tw.tween_property(p, "scale", Vector2.ONE, 0.18).set_trans(Tween.TRANS_BACK)
+	DialogueBox.shake(p, 8)
+	await c.get_tree().create_timer(1.1).timeout
+	c.queue_free()
+
+## 인생 스테이지 한눈에 보기
+func open_life() -> void:
+	world.pause(true)
+	var m: Dictionary = Main.inst.modal("🎂 나의 인생", 330)
+	var b: VBoxContainer = m.body
+	var cur := Game.stage_index()
+	for i in Stages.LIST.size():
+		var st: Dictionary = Stages.LIST[i]
+		var mk := "✅" if i < cur else ("▶️" if i == cur else "⬜")
+		var mm: Dictionary = Stages.missions().get(st.missionId, {})
+		var mt: String = mm.get("title", "6시 칼퇴 작전")
+		b.add_child(UI.label("%s %s %d살 · %s\n    미션: %s (%s)" % [mk, st.label, st.age, st.title, mt, st.place], 11, UI.NAVY if i == cur else (UI.INK if i < cur else UI.MUTED)))
+	if int(Game.w().get("lifeDone", 0)) > 0:
+		b.add_child(UI.label("🎉 인생 완주 %d회" % int(Game.w().lifeDone), 12, UI.PINK, HORIZONTAL_ALIGNMENT_CENTER))
+	b.add_child(UI.button("닫기", func(): m.root.queue_free(), "primary"))
+	await m.root.tree_exited
+	world.pause(false)
+
 func hit_flash() -> void:
 	flash.color.a = 0.35
 	create_tween().tween_property(flash, "color:a", 0.0, 0.35)
@@ -213,8 +255,9 @@ func refresh() -> void:
 	clock_label.text = Game.clock_text(s.clock)
 	clock_label.add_theme_color_override("font_color", Color("#9fb4ff") if s.clock >= 21 * 60 else Color.WHITE)
 	money_label.text = "💰 " + Game.won(s.money)
-	lv_label.text = "Lv.%d %s" % [s.level, Game.level_title(s.level)]
-	xp_bar.value = float(s.xp) / Game.xp_to_next(s.level) * 100
+	var stg := Game.stage()
+	lv_label.text = "🎂 %s %d살" % [stg.label, stg.age]
+	xp_bar.value = float(Game.stage_index() + 1) / Stages.LIST.size() * 100
 	bat_label.text = "🔋%d" % Game.save.battery
 	var f: Dictionary = world.fortune
 	if f:
@@ -411,11 +454,11 @@ func fortune_card(f: Dictionary, first: bool) -> void:
 	if first:
 		var todo := PanelContainer.new()
 		todo.add_theme_stylebox_override("panel", UI.box(Color("#fff3c4"), UI.INK, 2, 6))
-		var tip := "오늘의 퀘스트: 9시까지 회사 출근! 걸어가면 늦어요. 🚌버스·🚇지하철·🚲자전거를 이용하세요."
+		var tip := "오늘의 퀘스트: %s! 멀면 🚌버스·🚇지하철·🚲자전거를 이용하세요." % Game.stage().goal
 		if f.hazard != "":
-			tip += "\n출근길과 미션 가는 길에 %s이(가) 있어요. 피해서 가세요!" % Game.HAZARD[f.hazard].name
+			tip += "\n가는 길에 %s이(가) 있어요. 가까이 가면 ⚠️위험! 미니게임을 깨야 HP를 지켜요." % Game.HAZARD[f.hazard].name
 		if f.buff == "coins":
-			tip += "\n출근길에 떨어진 동전을 주우세요!"
+			tip += "\n가는 길에 떨어진 동전을 주우세요!"
 		todo.add_child(UI.label(tip, 11, UI.INK, HORIZONTAL_ALIGNMENT_CENTER))
 		b.add_child(todo)
 	var ok := UI.button("확인, 출발!" if first else "닫기", Callable(), "primary", 14)
@@ -435,17 +478,18 @@ func open_quests() -> void:
 	var line := func(text: String, size := 11, color := UI.INK):
 		b.add_child(UI.label(text, size, color))
 	line.call("오늘의 일정", 12, UI.PINK)
-	line.call("%s 09:00 지각 없이 출근 · 회사 앞" % st.call(Game.day_flag("commute"), Game.day_flag("late")))
-	var ids := ["MS_301", "MS_201", "MS_101"]
-	for id in ids:
-		var done := Game.day_flag("mission:" + id)
-		line.call("%s %s %s · %s" % [st.call(done, not done and s.clock > world.MISSION_TIME[id]), Game.clock_text(world.MISSION_TIME[id]), world.MISSION_NAME[id], world.MISSION_WHERE[id]])
+	var stg := Game.stage()
+	line.call("🎂 지금 나: %s %d살 · %s" % [stg.label, stg.age, stg.title], 11, UI.NAVY)
+	line.call("%s 09:00 %s" % [st.call(Game.day_flag("commute"), Game.day_flag("late")), stg.goal])
+	var id: String = stg.missionId
+	var done := Game.day_flag("mission:" + id)
+	line.call("%s %s %s · %s %s (깨면 나이 +1)" % [st.call(done, not done and s.clock > world.mission_time()), Game.clock_text(world.mission_time()), world.mission_name(), stg.place, stg.npc.name])
 	line.call("⬜ 21:00~ 집에 가서 자기 → 다음 날")
 	var f: Dictionary = world.fortune
 	line.call("오늘의 운세", 12, UI.PINK)
 	line.call("📜 %s %s · %s" % [f.pillar, f.grade, f.title])
 	if f.hazard != "":
-		line.call("길 위에 %s %d개. 닿으면 HP가 깎이고 상태 이상! 🩹반창고(편의점)로 회복" % [Game.HAZARD[f.hazard].name, world.hazards.size()])
+		line.call("길 위에 %s %d개. 가까이 가면 ⚠️위험! 미니게임을 깨야 HP를 지켜요. HP가 바닥나면 📺광고로 가득 회복" % [Game.HAZARD[f.hazard].name, world.hazards.size()])
 	line.call("동네 서브 퀘스트", 12, UI.PINK)
 	var cats := 0
 	for fl in s.flags:
@@ -454,8 +498,10 @@ func open_quests() -> void:
 	line.call("%s 동네 고양이 찾기 %d/%d" % [st.call(Game.has_flag("cats:done")), cats, Game.data.cats.size()])
 	line.call("💥 길에서 사람과 부딪치면 돌발 만남 (하루 한 번씩)")
 	line.call("동네 활동 (미니게임, 하루 한 번씩)", 12, UI.PINK)
-	line.call("%s 09~12시 📊 오전 회의 · 회사 앞 (출근한 날)" % st.call(Game.day_flag("job:meeting")))
-	line.call("%s 10~16시 ☕ 카페 알바 · 카페 앞" % st.call(Game.day_flag("job:cafe")))
+	if Game.stage_index() == 5:
+		line.call("%s 09~12시 📊 오전 회의 · 회사 앞 (출근한 날)" % st.call(Game.day_flag("job:meeting")))
+	if Game.stage_index() >= 4:
+		line.call("%s 10~16시 ☕ 카페 알바 · 카페 앞" % st.call(Game.day_flag("job:cafe")))
 	line.call("%s 08~21시 🪑 사람 구경 · 공원 벤치" % st.call(Game.day_flag("job:bench")))
 	line.call("교통", 12, UI.PINK)
 	line.call("🚌 버스 %s · 🚇 지하철 %s · 🚲 자전거 %s" % [Game.won(Game.data.busFare), Game.won(Game.data.subwayFare), Game.won(Game.data.bikeFare)])

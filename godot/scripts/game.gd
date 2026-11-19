@@ -1,4 +1,4 @@
-## 전역 상태: 데이터, 저장, 성향 궁합, 오늘의 운세.
+## 전역 상태: 데이터, 저장, 나이 스테이지, 오늘의 운세.
 extends Node
 
 signal changed  # 돈·시간·HP 등 HUD에 보일 값이 바뀜
@@ -28,7 +28,7 @@ func empty_save() -> Dictionary:
 
 func new_world() -> Dictionary:
 	return {"day": 1, "clock": 7 * 60 + 30, "level": 1, "xp": 0, "money": 5000, "look": Pix.DEFAULT_LOOK.duplicate(),
-		"owned": [], "dayFlags": [], "flags": [], "pos": null, "hp": 100, "status": "", "statusUntil": 0, "bandages": 0, "fortuneSeen": 0}
+		"owned": [], "dayFlags": [], "flags": [], "pos": null, "hp": 100, "status": "", "statusUntil": 0, "bandages": 0, "fortuneSeen": 0, "stage": 0, "lifeDone": 0}
 
 func load_save() -> void:
 	save = empty_save()
@@ -72,6 +72,37 @@ func active_profile():
 			return p.profile
 	return save.realProfile
 
+# ---------- 나이 스테이지 ----------
+func stage_index() -> int:
+	return clampi(int(w().get("stage", 0)), 0, Stages.LIST.size() - 1)
+
+func stage() -> Dictionary:
+	return Stages.get_stage(stage_index())
+
+## 스테이지 옷차림을 입힌다 (옷장에서 산 것은 그 뒤에 다시 갈아입을 수 있다)
+func apply_outfit() -> void:
+	var look: Dictionary = w().look
+	var o: Dictionary = stage().outfit
+	for k in o:
+		look[k] = o[k]
+	if not o.has("hair") and look.get("hair") == "#dddddd":
+		look.hair = Pix.DEFAULT_LOOK.hair
+	w().level = stage_index() + 1
+
+## 스테이지를 깨면 한 단계 나이를 먹는다. 마지막(노인)까지 깨면 true.
+func age_up() -> bool:
+	var s := w()
+	if stage_index() >= Stages.LIST.size() - 1:
+		s.lifeDone = int(s.get("lifeDone", 0)) + 1
+		s.stage = 0
+		apply_outfit()
+		persist()
+		return true
+	s.stage = stage_index() + 1
+	apply_outfit()
+	persist()
+	return false
+
 func active_name() -> String:
 	if save.personaId == null or save.personaId == "REAL":
 		return "나"
@@ -80,127 +111,8 @@ func active_name() -> String:
 			return p.name
 	return "나"
 
-const SIGN_START := [[3, 21], [4, 20], [5, 21], [6, 22], [7, 23], [8, 23], [9, 23], [10, 23], [11, 22], [12, 22], [1, 20], [2, 19]]
-const ELEMENTS4 := ["FIRE", "EARTH", "AIR", "WATER"]
-const GEN_ORDER := ["BOOM", "X", "M", "Z", "ALPHA"]
-
 static func zodiac_kr(year: int) -> int:
 	return posmod(year - 1900, 12)
-
-static func sign_index(m: int, d: int) -> int:
-	var best := 9
-	var best_key := -1
-	var key := m * 100 + d
-	for i in SIGN_START.size():
-		var k: int = SIGN_START[i][0] * 100 + SIGN_START[i][1]
-		if k <= key and k > best_key:
-			best_key = k
-			best = i
-	return best
-
-static func gen_of(y: int) -> String:
-	if y <= 1964: return "BOOM"
-	if y <= 1979: return "X"
-	if y <= 1994: return "M"
-	if y <= 2009: return "Z"
-	return "ALPHA"
-
-static func derive(p: Dictionary) -> Dictionary:
-	var s := sign_index(int(p.birthMonth), int(p.birthDay))
-	return {"zodiacKr": zodiac_kr(int(p.birthYear)), "sign": s, "element": ELEMENTS4[s % 4], "gen": gen_of(int(p.birthYear))}
-
-func describe(p: Dictionary) -> String:
-	var d := derive(p)
-	return "%s · %s형 · %s년생 %s띠 · %s" % [p.mbti, p.blood, str(int(p.birthYear)).substr(2), data.zodiacKr[d.zodiacKr], data.signs[d.sign]]
-
-# ---------- 궁합 ----------
-const MBTI_SHEET := {
-	"INFP>ESTJ": [-15, 1.5, "대환장 상극"], "INFP>ENFJ": [15, 0.8, "천생연분"], "ENFP>INTJ": [15, 0.9, "환상 보완"],
-	"ENFP>ISTJ": [-12, 1.4, "현실 충돌"], "INTP>ENTJ": [12, 0.9, "전략 파트너"], "INTP>ESFJ": [-10, 1.4, "기빨림 주의"],
-	"INFJ>ENTP": [15, 0.9, "지적 인력"], "INFJ>ESTP": [-12, 1.4, "극과 극 긴장"], "ISFP>ENTJ": [-15, 1.5, "멘탈 위기"],
-	"ISFP>ESFJ": [12, 0.9, "평화로운 합"], "ISTP>ESTJ": [10, 1.0, "일처리 최강"], "ISTP>ENFJ": [-10, 1.3, "온도차 주의"],
-	"ISFJ>ESTP": [12, 0.9, "상호 보완"], "ISTJ>ESFP": [-12, 1.4, "극한의 인내"], "ESTP>INFP": [-14, 1.4, "화성 금성"],
-}
-const MBTI_COMPLEMENT := ["ENFP-INTJ", "ENTP-INFJ", "ESFP-ISTJ", "ESTP-ISFJ", "INFP-ENFJ", "INTP-ENTJ"]
-const BLOOD_TABLE := {
-	"A>A": [6, 1.05, "예의바른 눈치전"], "A>B": [-8, 1.2, "직설 충돌"], "A>O": [8, 0.9, "안정 조화"], "A>AB": [4, 1.05, "차분한 문서형"],
-	"B>A": [-8, 1.3, "직구 화법 주의보"], "B>B": [6, 0.95, "스파크 튀는 텐션"], "B>O": [6, 1.0, "텐션 폭발"], "B>AB": [10, 0.9, "호기심 공명"],
-	"O>A": [8, 0.9, "리더 케어"], "O>B": [8, 0.9, "유쾌한 행동파"], "O>O": [4, 1.15, "자존심과 의리 사이"], "O>AB": [-6, 1.25, "친근감 vs 사생활"],
-	"AB>A": [6, 0.95, "합리적 평화"], "AB>B": [8, 0.9, "마이웨이 존중"], "AB>O": [-6, 1.1, "온도차 조율"], "AB>AB": [10, 0.8, "스마트 무간섭"],
-}
-const GEN_SHEET := {"Z>X": [-12, 1.3, "세대 장벽"], "M>X": [-5, 1.1, "중간관리 조율"], "M>Z": [-8, 1.2, "후배 코칭"], "M>ALPHA": [-10, 1.3, "눈높이 육아"], "Z>BOOM": [-15, 1.4, "격세대 소통"]}
-const WONJIN := [[0, 7], [1, 6], [2, 9], [3, 8], [4, 11], [5, 10]]
-const LAYERS := ["MBTI", "BLOOD", "GEN", "ZODIAC_KR", "WEST"]
-const LAYER_NAME := {"MBTI": "성격유형", "BLOOD": "혈액형", "GEN": "세대", "ZODIAC_KR": "띠", "WEST": "별자리"}
-
-static func _dir(table: Dictionary, a: String, b: String):
-	if table.has(a + ">" + b): return table[a + ">" + b]
-	if table.has(b + ">" + a): return table[b + ">" + a]
-	return null
-
-static func mbti_compat(a: String, b: String) -> Array:
-	var s = _dir(MBTI_SHEET, a, b)
-	if s != null: return s
-	if MBTI_COMPLEMENT.has(a + "-" + b) or MBTI_COMPLEMENT.has(b + "-" + a): return [15, 0.85, "환상 보완"]
-	if a == b: return [5, 1.0, "거울 같은 사이"]
-	var diff := 0
-	for i in [1, 2, 3]:
-		if a[i] != b[i]: diff += 1
-	if diff == 3: return [-12, 1.4, "대화 핀트 어긋남"]
-	if a[2] == b[2] and a[3] == b[3]: return [8, 0.9, "비즈니스 시너지"]
-	return [0, 1.0, "무난"]
-
-static func gen_compat(a: String, b: String) -> Array:
-	var s = _dir(GEN_SHEET, a, b)
-	if s != null: return s
-	var dist := absi(GEN_ORDER.find(a) - GEN_ORDER.find(b))
-	if dist == 0: return [5, 0.95, "같은 세대 공감"]
-	if dist == 1: return [-5, 1.1, "한 세대 차이"]
-	if dist == 2: return [-10, 1.25, "두 세대 차이"]
-	return [-15, 1.4, "격세대 소통"]
-
-static func zodiac_compat(a: int, b: int) -> Array:
-	var diff := absi(a - b)
-	var d := mini(diff, 12 - diff)
-	if a == b: return [3, 1.0, "같은 띠"]
-	if d == 4: return [15, 0.85, "삼합"]
-	if d == 6: return [-15, 1.4, "상충살"]
-	if (a + b) % 12 == 1: return [10, 0.9, "육합"]
-	for p in WONJIN:
-		if (p[0] == a and p[1] == b) or (p[0] == b and p[1] == a): return [-12, 1.3, "원진살"]
-	return [0, 1.0, "무난"]
-
-static func element_compat(a: String, b: String) -> Array:
-	if a == b: return [5, 0.95, "같은 원소"]
-	var pair := [a, b]
-	pair.sort()
-	match "-".join(pair):
-		"AIR-FIRE": return [10, 0.9, "불과 공기 상생"]
-		"EARTH-WATER": return [10, 0.9, "흙과 물 상생"]
-		"FIRE-WATER": return [-10, 1.3, "불과 물 상극"]
-		"AIR-EARTH": return [-8, 1.2, "흙과 공기 충돌"]
-	return [0, 1.0, "무난"]
-
-static func compute_compat(player: Dictionary, npc: Dictionary, level: int) -> Dictionary:
-	var pd := derive(player)
-	var nd := derive(npc)
-	var all := {
-		"MBTI": mbti_compat(player.mbti, npc.mbti),
-		"BLOOD": BLOOD_TABLE[player.blood + ">" + npc.blood],
-		"GEN": gen_compat(pd.gen, nd.gen),
-		"ZODIAC_KR": zodiac_compat(pd.zodiacKr, nd.zodiacKr),
-		"WEST": element_compat(pd.element, nd.element),
-	}
-	var layers := []
-	var fsum := 0.0
-	var msum := 0.0
-	for i in clampi(level, 1, 5):
-		var L: String = LAYERS[i]
-		var e: Array = all[L]
-		layers.append({"layer": L, "favor": e[0], "mult": e[1], "label": e[2]})
-		fsum += e[0]
-		msum += e[1] - 1.0
-	return {"layers": layers, "initFavor": int(clampf(50 + fsum, 20, 80)), "batteryMult": snappedf(clampf(1 + msum, 0.6, 2.0), 0.01)}
 
 # ---------- 오늘의 운세 (태어난 해 천간 오행 vs 오늘 일진 오행) ----------
 const STEMS := ["갑", "을", "병", "정", "무", "기", "경", "신", "임", "계"]
@@ -281,7 +193,7 @@ static func xp_to_next(level: int) -> int:
 	return 100 * level
 
 func level_title(lv: int) -> String:
-	return data.levelTitle[mini(lv, data.levelTitle.size() - 1)]
+	return Stages.get_stage(lv - 1).title
 
 static func clock_text(m: int) -> String:
 	return "%02d:%02d" % [int(m / 60) % 24, m % 60]
@@ -294,22 +206,13 @@ static func won(n: int) -> String:
 		s = s.substr(0, s.length() - 3)
 	return ("-" if n < 0 else "") + s + out + "원"
 
-## 레벨업이 있으면 올라간 레벨을 돌려준다 (없으면 0)
-func reward(money: int, xp: int, why: String) -> int:
+## 돈을 받는다 (레벨은 나이 스테이지로만 오른다. 돌려주는 값은 늘 0)
+func reward(money: int, _xp: int, why: String) -> int:
 	var s := w()
 	s.money += money
-	s.xp += xp
-	var up := 0
-	while s.xp >= xp_to_next(s.level):
-		s.xp -= xp_to_next(s.level)
-		s.level += 1
-		up = s.level
-	var bits := []
-	if money: bits.append("+" + won(money))
-	if xp: bits.append("+%dXP" % xp)
-	toast.emit(why + " " + " ".join(bits), "good")
+	toast.emit(why + (" +" + won(money) if money else ""), "good")
 	persist()
-	return up
+	return 0
 
 func set_battery(v: float) -> void:
 	save.battery = clampi(roundi(v), 0, 100)

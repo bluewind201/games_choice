@@ -1,4 +1,4 @@
-## 화면 관리: 타이틀 → 생년월일 → 성향 진단 → 캐릭터 카드 → 동네(오늘의 운세) ⇄ 미션·미니게임.
+## 화면 관리: 타이틀 → 생년월일 → 동네(오늘의 운세) ⇄ 나이 스테이지 미션·미니게임.
 class_name Main
 extends Node
 
@@ -22,6 +22,17 @@ const MG := {
 	"MG_703": preload("res://scripts/minigames/mg_faces.gd"),
 	"MG_801": preload("res://scripts/minigames/mg_fight.gd"),
 }
+## Stages.MG 설정으로 꾸며 쓰는 엔진
+const ENGINE := {
+	"jump": preload("res://scripts/minigames/mg_jump.gd"),
+	"dodge": preload("res://scripts/minigames/mg_dodge.gd"),
+	"quiz": preload("res://scripts/minigames/mg_quiz.gd"),
+}
+
+static func minigame_title(id: String) -> String:
+	if Stages.MG.has(id):
+		return Stages.MG[id].title
+	return id
 
 func _ready() -> void:
 	inst = self
@@ -230,10 +241,10 @@ func screen_title() -> void:
 	root.add_child(v)
 	var logo := UI.outlined(UI.label("선택의\n연속", 44, UI.YELLOW, HORIZONTAL_ALIGNMENT_CENTER), UI.INK, 10)
 	v.add_child(logo)
-	v.add_child(UI.outlined(UI.label("오늘의 운세를 보고, 동네를 누비고,\n말 한마디로 판을 뒤집어라", 13, Color.WHITE, HORIZONTAL_ALIGNMENT_CENTER), UI.INK, 6))
+	v.add_child(UI.outlined(UI.label("유딩부터 노인까지, 오늘의 운세를 보고\n말 한마디로 인생을 헤쳐 나가라", 13, Color.WHITE, HORIZONTAL_ALIGNMENT_CENTER), UI.INK, 6))
 	var chars := UI.hbox(4)
 	chars.alignment = BoxContainer.ALIGNMENT_CENTER
-	for pair in [["boss", "SUSPECT"], ["jiwoo", "HAPPY"], ["hana", "PANIC"]]:
+	for pair in [["t_kim", "HAPPY"], ["mom", "ANGRY"], ["boss", "SUSPECT"]]:
 		var p := PortraitView.new(npc_look(pair[0]), 1)
 		p.custom_minimum_size = Vector2(96, 96)
 		p.px = 1
@@ -253,9 +264,12 @@ func screen_title() -> void:
 			Game.clear_save()
 		screen_birth(), "normal" if has else "primary", 15))
 	v.add_child(UI.spacer(6))
-	v.add_child(UI.outlined(UI.label("성향 궁합과 운세는 재미로 즐기는 밈이에요. 실제 사람을 판단하는 기준이 아니에요. 입력한 정보는 이 기기에만 저장돼요.", 10, Color("#e8e2ff"), HORIZONTAL_ALIGNMENT_CENTER), UI.INK, 4))
+	v.add_child(UI.outlined(UI.label("유딩부터 노인까지, 말 한마디와 미니게임으로 인생을 살아 내요. 운세는 재미로 보는 거예요. 입력한 생년월일은 이 기기에만 저장돼요.", 10, Color("#e8e2ff"), HORIZONTAL_ALIGNMENT_CENTER), UI.INK, 4))
 
 func npc_look(id: String) -> Dictionary:
+	for st in Stages.LIST:
+		if st.npc.id == id and not st.npc.look.is_empty():
+			return Pix.full_look(st.npc.look)
 	for n in Game.data.npcs:
 		if n.id == id:
 			return Pix.full_look(n.look)
@@ -287,136 +301,40 @@ func screen_birth() -> void:
 	var root := screen_bg(Color("#fff3d6"), Color("#ffd6e0"))
 	set_screen(root)
 	var v := scroll_column(root)
-	v.add_child(UI.label("당신의 사회생활 캐릭터 만들기", 17, UI.NAVY, HORIZONTAL_ALIGNMENT_CENTER))
-	v.add_child(UI.label("생년월일과 혈액형으로 띠·별자리·세대가 나오고, 태어난 해의 기운으로 매일 아침 오늘의 운세를 봐요.", 12, UI.MUTED, HORIZONTAL_ALIGNMENT_CENTER))
-	var p := {"mbti": "XXXX", "blood": "A", "birthYear": 1995, "birthMonth": 1, "birthDay": 1}
-	var derived := UI.label("", 12, UI.INK, HORIZONTAL_ALIGNMENT_CENTER)
+	v.add_child(UI.label("나의 인생 시작하기", 18, UI.NAVY, HORIZONTAL_ALIGNMENT_CENTER))
+	v.add_child(UI.label("생년월일로 타고난 기운을 보고, 매일 아침 오늘의 운세를 봐요. 6살 유치원생부터 시작해요!", 12, UI.MUTED, HORIZONTAL_ALIGNMENT_CENTER))
+	var p := {"birthYear": 1995, "birthMonth": 1, "birthDay": 1}
+	var derived := UI.label("", 13, UI.INK, HORIZONTAL_ALIGNMENT_CENTER)
 	var update := func():
-		var d := Game.derive(p)
 		var stem: int = posmod(int(p.birthYear) - 4, 10)
-		derived.text = "%s띠 · %s · %s\n타고난 기운: %s(%s)" % [Game.data.zodiacKr[d.zodiacKr], Game.data.signs[d.sign], Game.data.genLabel[d.gen], Game.ELEMENTS5[stem / 2], Game.ELEMENT5_HANJA[stem / 2]]
+		derived.text = "%s띠 · 타고난 기운: %s(%s)" % [Game.data.zodiacKr[Game.zodiac_kr(int(p.birthYear))], Game.ELEMENTS5[stem / 2], Game.ELEMENT5_HANJA[stem / 2]]
 	var panel := PanelContainer.new()
 	var pv := UI.vbox(8)
 	panel.add_child(pv)
 	pv.add_child(_stepper("태어난 해", 1995, 1950, 2015, func(x): p.birthYear = x; update.call()))
 	pv.add_child(_stepper("월", 1, 1, 12, func(x): p.birthMonth = x; update.call()))
 	pv.add_child(_stepper("일", 1, 1, 31, func(x): p.birthDay = x; update.call()))
-	var bh := UI.hbox(6)
-	bh.add_child(UI.label("혈액형", 12, UI.INK, HORIZONTAL_ALIGNMENT_LEFT, false))
-	var bbtns := []
-	for b in ["A", "B", "O", "AB"]:
-		var btn := UI.button(b + "형")
-		btn.toggle_mode = true
-		btn.button_pressed = b == "A"
-		btn.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-		btn.add_theme_stylebox_override("hover_pressed", UI.box(UI.YELLOW, UI.INK, 2, 7, 1))
-		btn.add_theme_stylebox_override("pressed", UI.box(UI.YELLOW, UI.INK, 2, 7, 1))
-		bbtns.append(btn)
-		btn.pressed.connect(func():
-			Sfx.play("pick")
-			p.blood = b
-			for o in bbtns: o.button_pressed = o == btn)
-		bh.add_child(btn)
-	pv.add_child(bh)
 	v.add_child(panel)
 	v.add_child(derived)
 	update.call()
-	v.add_child(UI.button("성향 진단 시작 (12문항)", func(): screen_quiz(0, [], p), "primary", 14))
-
-func screen_quiz(i: int, answers: Array, base: Dictionary) -> void:
-	var quiz: Array = Game.data.quiz
-	if i >= quiz.size():
-		base.mbti = score_quiz(answers)
-		Game.save.realProfile = base
+	var life := PanelContainer.new()
+	var lv := UI.vbox(4)
+	life.add_child(lv)
+	lv.add_child(UI.label("인생 스테이지", 12, UI.PINK, HORIZONTAL_ALIGNMENT_CENTER))
+	var names := []
+	for st in Stages.LIST:
+		names.append(st.label)
+	lv.add_child(UI.label(" → ".join(names), 12, UI.NAVY, HORIZONTAL_ALIGNMENT_CENTER))
+	lv.add_child(UI.label("스테이지 미션을 깨면 나이를 먹어요.", 11, UI.MUTED, HORIZONTAL_ALIGNMENT_CENTER))
+	v.add_child(life)
+	v.add_child(UI.button("👶 이 생년월일로 태어나기", func():
+		Game.save.realProfile = p
 		Game.save.personaId = "REAL"
+		Game.save.world = null
+		Game.apply_outfit()
 		Game.persist()
-		screen_my_card()
-		return
-	var q: Dictionary = quiz[i]
-	var root := screen_bg(Color("#eaf2ff"), Color("#f3e8ff"))
-	set_screen(root)
-	var v := scroll_column(root, 12)
-	var bar := UI.gauge(UI.BLUE, 10)
-	bar.value = float(i) / quiz.size() * 100
-	v.add_child(bar)
-	v.add_child(UI.label("%d / %d · %s" % [i + 1, quiz.size(), q.title], 12, UI.MUTED, HORIZONTAL_ALIGNMENT_CENTER))
-	v.add_child(UI.label(q.q, 16, UI.NAVY, HORIZONTAL_ALIGNMENT_CENTER))
-	v.add_child(UI.spacer(10))
-	v.add_child(UI.button(q.a.text, func(): screen_quiz(i + 1, answers + ["a"], base), "normal", 13))
-	v.add_child(UI.button(q.b.text, func(): screen_quiz(i + 1, answers + ["b"], base), "normal", 13))
+		enter_world(), "primary", 15))
 
-func score_quiz(answers: Array) -> String:
-	var score := {}
-	var quiz: Array = Game.data.quiz
-	for i in answers.size():
-		var it: Dictionary = quiz[i][answers[i]]
-		score[it.letter] = score.get(it.letter, 0) + int(it.score)
-	var pick := func(a: String, b: String) -> String:
-		return a if score.get(a, 0) >= score.get(b, 0) else b
-	return pick.call("E", "I") + pick.call("S", "N") + pick.call("T", "F") + pick.call("J", "P")
-
-func profile_card(p: Dictionary, title: String, sub := "", on := false) -> PanelContainer:
-	var d := Game.derive(p)
-	var c := PanelContainer.new()
-	c.add_theme_stylebox_override("panel", UI.box(UI.YELLOW if on else Color.WHITE, UI.INK, 2, 8, 3))
-	var v := UI.vbox(3)
-	c.add_child(v)
-	v.add_child(UI.label(title, 13, UI.NAVY, HORIZONTAL_ALIGNMENT_CENTER))
-	if sub != "":
-		v.add_child(UI.label(sub, 11, UI.MUTED, HORIZONTAL_ALIGNMENT_CENTER))
-	v.add_child(UI.label(p.mbti, 26, UI.PINK, HORIZONTAL_ALIGNMENT_CENTER))
-	v.add_child(UI.label("%s형 · %s년생 %s · %s띠 · %s" % [p.blood, str(int(p.birthYear)).substr(2), Game.data.genLabel[d.gen], Game.data.zodiacKr[d.zodiacKr], Game.data.signs[d.sign]], 11, UI.INK, HORIZONTAL_ALIGNMENT_CENTER))
-	return c
-
-func screen_my_card() -> void:
-	var root := screen_bg(Color("#fff3d6"), Color("#d6f5ff"))
-	set_screen(root)
-	var v := scroll_column(root)
-	v.add_child(UI.label("당신의 사회생활 캐릭터 카드", 17, UI.NAVY, HORIZONTAL_ALIGNMENT_CENTER))
-	v.add_child(profile_card(Game.save.realProfile, "진짜 나"))
-	v.add_child(UI.label("이 성향으로 플레이할 수도 있고, 상대와 궁합이 불리하면 다른 페르소나를 골라 쓸 수도 있어요. 언제든 바꿀 수 있어요.", 12, UI.MUTED, HORIZONTAL_ALIGNMENT_CENTER))
-	v.add_child(UI.button("이 성향으로 시작", func():
-		Game.save.personaId = "REAL"
-		Game.persist()
-		enter_world(), "primary", 14))
-	v.add_child(UI.button("페르소나 고르기", screen_persona))
-
-func screen_persona() -> void:
-	if world:
-		world.pause(true)
-	var root := screen_bg(Color("#f3e8ff"), Color("#fff3d6"))
-	set_screen(root)
-	var v := scroll_column(root)
-	v.add_child(UI.label("페르소나 고르기", 17, UI.NAVY, HORIZONTAL_ALIGNMENT_CENTER))
-	v.add_child(UI.label("사회생활은 가면도 실력! 오늘 쓸 캐릭터를 골라요. (운세는 진짜 나의 사주로 봐요)", 12, UI.MUTED, HORIZONTAL_ALIGNMENT_CENTER))
-	var opts := [{"id": "REAL", "name": "진짜 나", "tagline": "온보딩에서 진단한 내 성향", "profile": Game.save.realProfile}]
-	opts.append_array(Game.data.personas)
-	for o in opts:
-		var card := profile_card(o.profile, o.name, o.tagline, Game.save.personaId == o.id)
-		var b := Button.new()
-		b.flat = true
-		b.focus_mode = Control.FOCUS_NONE
-		b.custom_minimum_size = Vector2(0, 0)
-		b.add_theme_stylebox_override("normal", StyleBoxEmpty.new())
-		b.add_theme_stylebox_override("hover", StyleBoxEmpty.new())
-		b.add_theme_stylebox_override("pressed", StyleBoxEmpty.new())
-		card.mouse_filter = Control.MOUSE_FILTER_IGNORE
-		for ch in card.find_children("*", "Control", true, false):
-			ch.mouse_filter = Control.MOUSE_FILTER_IGNORE
-		var wrap := Control.new()
-		wrap.custom_minimum_size = Vector2(0, 104 if o.tagline != "" else 88)
-		wrap.add_child(UI.full(card))
-		wrap.add_child(UI.full(b))
-		b.pressed.connect(func():
-			Sfx.play("good")
-			Game.save.personaId = o.id
-			Game.persist()
-			toast(o.name + " 장착!", "good")
-			enter_world())
-		v.add_child(wrap)
-	v.add_child(UI.button("돌아가기", enter_world))
-
-# ---------- 동네 ----------
 func enter_world() -> void:
 	if Game.save.realProfile == null:
 		return screen_birth()
@@ -428,6 +346,18 @@ func enter_world() -> void:
 		add_child(world)
 	world.visible = true
 	world.resume()
+
+## 나이를 먹으면 동네(스테이지 NPC·위험물 길)를 새로 꾸민다
+func restart_world() -> void:
+	_leave_world()
+	enter_world()
+
+## 보상형 광고 자리 (실제 앱에서는 광고 SDK)
+func fake_ad() -> void:
+	var md: Dictionary = modal("📺 광고 (테스트)")
+	md.body.add_child(UI.label("실제 앱에서는 여기서 보상형 광고가 나와요.", 12, UI.MUTED, HORIZONTAL_ALIGNMENT_CENTER))
+	await get_tree().create_timer(1.2).timeout
+	md.root.queue_free()
 
 func _leave_world() -> void:
 	if world:
@@ -448,10 +378,13 @@ func show_world() -> void:
 
 ## 미션을 실행하고 등급을 돌려준다.
 func run_mission(id: String) -> String:
-	var m: Dictionary
-	for x in Game.data.missions:
-		if x.id == id:
-			m = x
+	var m: Dictionary = Stages.missions().get(id, {})
+	if m.is_empty():
+		for x in Game.data.missions:
+			if x.id == id:
+				m = x.duplicate(true)
+		if id == "MS_301":
+			m.chapter = "6단계 · 직장인 (30살)"
 	hide_world()
 	var runner = MissionScript.new(m)
 	set_screen(runner)
@@ -463,7 +396,13 @@ func run_mission(id: String) -> String:
 
 ## 미니게임: 준비 화면 → 게임 → 결과
 func run_minigame(id: String, npc = null, hostile := false) -> String:
-	var def = MG[id].new()
+	var def
+	if MG.has(id):
+		def = MG[id].new()
+	else:
+		var cfg: Dictionary = Stages.MG[id]
+		def = ENGINE[cfg.engine].new()
+		def.configure(cfg)
 	var root := UI.full(Control.new())
 	root.theme = UI.theme()
 	root.mouse_filter = Control.MOUSE_FILTER_STOP
@@ -487,7 +426,7 @@ func run_minigame(id: String, npc = null, hostile := false) -> String:
 	var stage := UI.full(Control.new())
 	root.add_child(stage)
 	if npc == null:
-		npc = Game.active_profile()
+		npc = {}
 	var res: String = await def.run(stage, npc, hostile)
 	Sfx.play("bad" if res == "fail" else "good")
 	var txt: String = {"great": "대성공!", "normal": "성공!", "fail": "실패…"}[res]

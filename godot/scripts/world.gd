@@ -1,5 +1,5 @@
 ## 동네: 넓은 도트 지도를 위에서 내려다보며 돌아다닌다.
-## 하루 퀘스트(출근·미션·동네 활동)가 중심이고, 오늘의 운세가 퀘스트 길 위에 돌·물웅덩이·개를 깔아 둔다.
+## 나이 스테이지마다 하루 퀘스트(등교·출근·미션·동네 활동)가 중심이고, 오늘의 운세가 퀘스트 길 위에 돌·물웅덩이·개를 깔아 둔다.
 extends Node2D
 
 const U := 16.0
@@ -9,9 +9,9 @@ const BIKE_SPEED := 11.5
 const ACCEL := 40.0
 const OFFICE_DOOR := Vector2(118, 32.6)
 const HOME_START := Vector2(19, 95.2)
-const MISSION_TIME := {"MS_301": 16 * 60 + 50, "MS_201": 19 * 60, "MS_101": 20 * 60}
-const MISSION_NAME := {"MS_301": "6시 칼퇴 작전", "MS_201": "애프터 확정 작전", "MS_101": "뒤풀이 탈출 작전"}
-const MISSION_WHERE := {"MS_301": "회사 앞 박 팀장", "MS_201": "파스타 가게 앞 지우", "MS_101": "공원 러닝크루 하나"}
+## 위험물 미니게임
+const HAZARD_MG := {"stone": "HZ_stone", "puddle": "HZ_puddle", "dog": "HZ_dog"}
+const HAZARD_DMG := {"stone": [14, "limp", "🪨 돌부리에 걸려 넘어졌다!"], "puddle": [10, "wet", "💧 물웅덩이에 빠졌다!"], "dog": [16, "scared", "🐕 멍멍! 개가 달려들어 깜짝 놀랐다!"]}
 const STATUS := {
 	"limp": {"name": "절뚝절뚝", "speed": 0.55, "min": 40},
 	"wet": {"name": "발이 축축", "speed": 0.85, "min": 30},
@@ -123,6 +123,20 @@ func _prop(kind: String, p: Vector2) -> Actor:
 	return a
 
 # ---------- 하루 시작 / 운세 ----------
+# ---------- 나이 스테이지 ----------
+func stage() -> Dictionary:
+	return Game.stage()
+
+func stage_door() -> Vector2:
+	return stage().door
+
+func mission_time() -> int:
+	return int(stage().missionTime)
+
+func mission_name() -> String:
+	var m: Dictionary = Stages.missions().get(stage().missionId, {})
+	return m.get("title", "6시 칼퇴 작전")
+
 func _start_day(new_day: bool) -> void:
 	fortune = Game.today_fortune()
 	_place_hazards()
@@ -145,8 +159,7 @@ func _clear_hazards() -> void:
 	coins.clear()
 
 func _route_point(r: RandomNumberGenerator) -> Vector2:
-	var keys := ["commute", "commute", "commute", "park", "pasta"]
-	var pts: Array = ROUTES[keys[r.randi() % keys.size()]]
+	var pts: Array = stage().route
 	var i := r.randi() % (pts.size() - 1)
 	var a: Vector2 = pts[i]
 	var b: Vector2 = pts[i + 1]
@@ -164,18 +177,19 @@ func _place_hazards() -> void:
 	var day: int = Game.w().day
 	var r := Game.seeded(day, 101)
 	var kind: String = fortune.hazard
-	var n: int = fortune.hazardCount
+	# 위험물 하나하나가 미니게임이라 길 위에 몇 개만 둔다 (운세가 나쁠수록 많이)
+	var n: int = {"great": 0, "good": 2, "soso": 3, "bad": 5}.get(fortune.luck, 3) if kind != "" else 0
 	if kind == "dog":
-		n = maxi(2, n / 6)
+		n = mini(n, 3)
 	var tries := 0
 	while hazards.size() < n and tries < n * 20:
 		tries += 1
 		var p := _route_point(r)
-		if p.distance_to(HOME_START) < 4 or p.distance_to(OFFICE_DOOR) < 3:
+		if p.distance_to(HOME_START) < 4 or p.distance_to(stage_door()) < 3 or _collide(p) != p:
 			continue
 		var ok := true
 		for h in hazards:
-			if h.pos.distance_to(p) < (1.4 if kind != "dog" else 10.0):
+			if h.pos.distance_to(p) < (7.0 if kind != "dog" else 12.0):
 				ok = false
 				break
 		for st in Game.data.bus + Game.data.subway + Game.data.bikes:
@@ -190,7 +204,7 @@ func _place_hazards() -> void:
 			ground.add_child(a)
 		else:
 			ysort.add_child(a)
-		hazards.append({"kind": kind, "actor": a, "pos": p, "home": p, "cool": 0.0, "dir": 1.0})
+		hazards.append({"kind": kind, "actor": a, "pos": p, "home": p, "cool": 0.0, "dir": 1.0, "done": false})
 	if fortune.buff == "coins":
 		var rc := Game.seeded(day, 202)
 		for i in 14:
@@ -203,7 +217,14 @@ func _place_hazards() -> void:
 
 # ---------- NPC · 상호작용 ----------
 func _build_npcs() -> void:
+	var defs := []
 	for def in Game.data.npcs:
+		if def.kind != "mission":
+			defs.append(def)
+	var sn: Dictionary = stage().npc
+	defs.append({"id": sn.id, "name": sn.name, "kind": "mission", "missionId": stage().missionId, "x": sn.pos.x, "z": sn.pos.y,
+		"look": sn.look if not sn.look.is_empty() else Main.inst.npc_look(sn.id)})
+	for def in defs:
 		var a := Actor.new("person")
 		a.look = Pix.full_look(def.look)
 		a.anim_speed = 6
@@ -236,9 +257,9 @@ func _build_interactables() -> void:
 		Main.inst.toast("👛 지갑을 주웠다. 안에 할머니 사진이... 옆집 할머니 것 같다!", "info")})
 	# 동네 활동 (미니게임)
 	var acts := [
-		{"id": "cafe", "label": "☕ 카페 알바 (주문 기억하기)", "marker": "☕", "pos": Vector2(97, 32.8), "mg": "MG_702", "from": 600, "to": 960, "minutes": 60, "battery": -10,
+		{"id": "cafe", "label": "☕ 카페 알바 (주문 기억하기)", "marker": "☕", "pos": Vector2(97, 32.8), "mg": "MG_702", "from": 600, "to": 960, "minutes": 60, "battery": -10, "minStage": 4,
 			"reward": {"great": [9000, 30], "normal": [6000, 20], "fail": [1000, 5]}, "title": "☕ 카페 알바"},
-		{"id": "meeting", "label": "📊 오전 회의 (말 끊기 타이밍)", "marker": "📊", "pos": Vector2(122, 32.8), "mg": "MG_701", "from": 540, "to": 720, "minutes": 60, "battery": -8, "need": "commute",
+		{"id": "meeting", "label": "📊 오전 회의 (말 끊기 타이밍)", "marker": "📊", "pos": Vector2(122, 32.8), "mg": "MG_701", "from": 540, "to": 720, "minutes": 60, "battery": -8, "need": "commute", "onlyStage": 5,
 			"reward": {"great": [5000, 35], "normal": [3000, 25], "fail": [0, 10]}, "title": "📊 오전 회의"},
 		{"id": "bench", "label": "🪑 벤치에서 사람 구경 (표정 읽기)", "marker": "🪑", "pos": Vector2(18, 25), "mg": "MG_703", "from": 480, "to": 1260, "minutes": 30, "battery": 10,
 			"reward": {"great": [0, 40], "normal": [0, 25], "fail": [0, 10]}, "title": "🪑 사람 구경"},
@@ -247,6 +268,9 @@ func _build_interactables() -> void:
 		interactables.append({"label": a.label, "marker": a.marker, "pos": a.pos,
 			"visible": func():
 				var s := Game.w()
+				var si := Game.stage_index()
+				if a.has("minStage") and si < a.minStage: return false
+				if a.has("onlyStage") and si != a.onlyStage: return false
 				return not Game.day_flag("job:" + a.id) and s.clock >= a.from and s.clock <= a.to and (not a.has("need") or Game.day_flag(a.need)),
 			"action": func(): _activity(a)})
 	# 교통
@@ -377,15 +401,15 @@ func _process(dt: float) -> void:
 		current = best
 		hud.set_action(best.label if best else "")
 	# 출근 체크
-	if not Game.day_flag("commute") and not Game.day_flag("late") and pos.distance_to(OFFICE_DOOR) < 2.6:
+	if not Game.day_flag("commute") and not Game.day_flag("late") and pos.distance_to(stage_door()) < 2.6:
 		if s.clock <= 9 * 60:
 			Game.add_day_flag("commute")
 			Sfx.play("good")
-			_reward(3000, 20, "⏰ 지각 없이 출근 완료!")
+			_reward(3000, 20, "⏰ 늦지 않게 %s 도착!" % stage().place)
 		else:
 			Game.add_day_flag("late")
 			Sfx.play("bad")
-			Main.inst.toast("😰 지각이다... 팀장 눈치가 보인다", "bad")
+			Main.inst.toast("😰 늦었다... 눈치가 보인다", "bad")
 	# 시간
 	clock_acc += dt * MIN_PER_SEC
 	if clock_acc >= 1:
@@ -460,34 +484,21 @@ func _update_npcs(dt: float) -> void:
 func _update_hazards(dt: float) -> void:
 	var s := Game.w()
 	for h in hazards:
+		if h.done:
+			continue
 		var a: Actor = h.actor
 		var d: float = pos.distance_to(h.pos)
 		match h.kind:
-			"stone":
-				a.flash = 1.0 if d < 2.2 and invuln <= 0 else 0.0
-				if d < 0.62 and invuln <= 0:
-					if ride == "bike":
-						_hurt(14, "limp", "🪨 자전거가 돌에 걸려 넘어졌다!")
-						ride = ""
-						Main.inst.toast("🚲 자전거는 대여소로 돌아갔다", "info")
-					else:
-						_hurt(12, "limp", "🪨 돌부리에 걸려 넘어졌다!")
-					return
-			"puddle":
-				if d < 0.75 and invuln <= 0:
-					Sfx.play("splash")
-					Game.set_battery(Game.save.battery - 6)
-					_hurt(5, "wet", "💧 물웅덩이를 밟았다! 배터리 -6")
+			"stone", "puddle":
+				a.flash = 1.0 if d < 3.0 else 0.0
+				if d < 1.5 and invuln <= 0:
+					_hazard_event(h)
 					return
 			"dog":
-				h.cool = maxf(0, h.cool - dt)
-				var chase: bool = d < 3.5 and h.cool <= 0
+				var chase: bool = d < 4.0
 				var goal: Vector2 = pos if chase else h.home + Vector2(sin(t * 0.6 + h.home.x) * 2.5, 0)
 				var dv: Vector2 = goal - h.pos
-				var sp := 3.9 if chase else 1.2
-				if h.cool > 0:
-					dv = h.pos - pos
-					sp = 4.5
+				var sp := 3.0 if chase else 1.2
 				if dv.length() > 0.1:
 					h.pos = _collide(h.pos + dv.normalized() * sp * dt, 0.3)
 					a.moving = true
@@ -496,12 +507,10 @@ func _update_hazards(dt: float) -> void:
 					a.moving = false
 				a.angry = chase
 				a.position = (h.pos * U).round()
-				if chase and int(t * 2) != int((t - dt) * 2) and d < 3:
+				if chase and int(t * 2) != int((t - dt) * 2):
 					Sfx.play("bark", 1.2)
-				if d < 0.8 and invuln <= 0:
-					h.cool = 4.0
-					Sfx.play("bark")
-					_hurt(15, "scared", "🐕 멍멍! 개가 달려들어 깜짝 놀랐다!")
+				if d < 1.6 and invuln <= 0:
+					_hazard_event(h)
 					return
 	for c in coins.duplicate():
 		if pos.distance_to(c.pos) < 0.8:
@@ -511,6 +520,29 @@ func _update_hazards(dt: float) -> void:
 			Sfx.play("coin")
 			Main.inst.toast("🪙 동전을 주웠다! +500원 (재물운)", "good")
 			Game.persist()
+
+## 운세 속 위험물에 다가가면 "⚠️ 위험!" → 위험물 미니게임. 깨면 무사 통과, 지면 HP가 깎인다.
+func _hazard_event(h: Dictionary) -> void:
+	h.done = true
+	pause(true)
+	vel = Vector2.ZERO
+	Sfx.play("bell", 0.7)
+	await hud.danger_banner("⚠️ 위험! %s 조심!" % Game.HAZARD[h.kind].name)
+	var res: String = await Main.inst.run_minigame(HAZARD_MG[h.kind])
+	h.actor.queue_free()
+	pause(false)
+	invuln = 1.0
+	if res == "fail":
+		var dm: Array = HAZARD_DMG[h.kind]
+		if ride == "bike":
+			ride = ""
+			Main.inst.toast("🚲 자전거는 대여소로 돌아갔다", "info")
+		if h.kind == "puddle":
+			Game.set_battery(Game.save.battery - 6)
+		_hurt(int(dm[0]), dm[1], dm[2])
+	else:
+		Sfx.play("good")
+		Main.inst.toast("✨ %s 무사 통과! HP를 지켰다" % Game.HAZARD[h.kind].name, "good")
 
 func _hurt(dmg: int, st: String, why: String) -> void:
 	var s := Game.w()
@@ -530,16 +562,27 @@ func _hurt(dmg: int, st: String, why: String) -> void:
 	if s.hp <= 0:
 		_faint()
 
+## HP를 다 쓰면: 보상형 광고를 보고 가득 채우거나, 집에서 쉬기
 func _faint() -> void:
 	var s := Game.w()
 	pause(true)
 	ride = ""
-	await Main.inst.alert("😵 기절!", "오늘 운세를 무시하다가 결국 쓰러졌다... 지나가던 이웃이 집까지 데려다줬다.\n\n시간 +90분 · 병원비 -3,000원 · HP 40으로 회복")
-	s.clock += 90
-	s.money = maxi(0, s.money - 3000)
-	s.hp = 40
+	var md: Dictionary = Main.inst.modal("😵 HP가 바닥났어요!")
+	md.body.add_child(UI.label("오늘 운세를 얕봤다가 기운이 다 빠졌어요.", 12, UI.INK, HORIZONTAL_ALIGNMENT_CENTER))
+	var pick := [0]
+	md.body.add_child(UI.button("📺 광고 보고 HP 가득 채우기", func(): pick[0] = 1; md.root.queue_free(), "primary", 14))
+	md.body.add_child(UI.button("🏠 집에서 쉬기 (시간 +90분 · HP 50)", func(): pick[0] = 2; md.root.queue_free()))
+	await md.root.tree_exited
+	if pick[0] == 1:
+		await Main.inst.fake_ad()
+		s.hp = 100
+		Sfx.play("levelup")
+		Main.inst.toast("❤️ HP 100으로 가득 찼다!", "good")
+	else:
+		s.clock += 90
+		s.hp = 50
+		teleport(HOME_START)
 	s.status = ""
-	teleport(HOME_START)
 	Game.persist()
 	pause(false)
 
@@ -579,7 +622,7 @@ func _talk_to(def: Dictionary) -> void:
 			await dialog(def.name, "어머나, 내 지갑! 손주 사진이 들어 있어서 얼마나 찾았는데... *고마워요*, 이거 받아요!", _npc_look(def.id), "CRY")
 			_reward(10000, 30, "👛 지갑을 찾아 드렸다!")
 		elif Game.has_flag("wallet:done"):
-			await dialog(def.name, "오늘도 출근하나 봐요? 밥 잘 챙겨 먹고 다녀요~", _npc_look(def.id), "HAPPY")
+			await dialog(def.name, "오늘도 바쁘구나? 밥 잘 챙겨 먹고 다녀요~", _npc_look(def.id), "HAPPY")
 		else:
 			var tip := ""
 			if fortune.hazard != "":
@@ -591,15 +634,16 @@ func _talk_to(def: Dictionary) -> void:
 		if Game.day_flag("mission:" + id):
 			await dialog(def.name, "오늘은 이미 이야기 나눴잖아요. 내일 또 봐요!", _npc_look(def.id), "HAPPY")
 			return
-		var at: int = MISSION_TIME[id]
+		var at: int = mission_time()
 		if s.clock > at:
-			await dialog(def.name, "(%s가 이미 지났다. %s은(는) 내일 다시 할 수 있다.)" % [Game.clock_text(at), MISSION_NAME[id]], _npc_look(def.id), "SUSPECT")
+			await dialog(def.name, "(%s가 이미 지났다. %s은(는) 내일 다시 할 수 있다.)" % [Game.clock_text(at), mission_name()], _npc_look(def.id), "SUSPECT")
 			return
 		var greet: Array = {"MS_301": ["이 대리, 퇴근 전에 잠깐 나 좀 보지. 할 얘기가 *좀 많아*.", "SUSPECT"],
-			"MS_201": ["아, 안녕하세요! 혹시... 오늘 소개팅 상대분 맞으시죠?", "HAPPY"],
-			"MS_101": ["어? 오늘 처음 오신 분이죠! 저희 크루 뒤풀이 엄청 재밌어요!", "HAPPY"]}.get(id, ["잠깐 얘기 좀 할까요?", "NORMAL"])
+			"ST_KID": ["햇님반 친구들~ 간식 시간이에요!", "HAPPY"], "ST_ELEM": ["받아쓰기 시험지 받아 가렴. 음... *40점*이구나.", "SUSPECT"],
+			"ST_MID": ["너 거기 서! 학원 가방 들고 어디 가니?", "ANGRY"], "ST_HIGH": ["무슨 일이냐. 야자 시간 다 됐다.", "SUSPECT"],
+			"ST_UNIV": ["어 안녕~ 늦어서 미안! 나 뭐 하면 돼?", "HAPPY"], "ST_OLD": ["할머니(할아버지)! 오늘은 영상 통화 배우는 날이에요!", "HAPPY"]}.get(id, ["잠깐 얘기 좀 할까요?", "NORMAL"])
 		pause(true)
-		var tk := _talk("🎯 %s · %s" % [MISSION_NAME[id], Game.clock_text(at)])
+		var tk := _talk("🎯 %s · %s" % [mission_name(), Game.clock_text(at)])
 		await tk.say(def.name, _npc_look(def.id), greet[1], greet[0])
 		var pick := await tk.choose(["🎯 미션 시작 (시간이 %s(으)로 넘어가요)" % Game.clock_text(maxi(at, s.clock)), "나중에 다시 오기"])
 		tk.close()
@@ -611,7 +655,9 @@ func _talk_to(def: Dictionary) -> void:
 		var grade: String = await Main.inst.run_mission(id)
 		var r: Dictionary = Game.data.missionReward.get(grade, Game.data.missionReward.F)
 		s.clock = maxi(s.clock, at + 60)
-		_reward(int(r.money), int(r.xp), "🎯 %s %s등급!" % [MISSION_NAME[id], grade])
+		_reward(int(r.money), int(r.xp), "🎯 %s %s등급!" % [mission_name(), grade])
+		if grade != "F":
+			_grow_up()
 
 func _encounter(def: Dictionary) -> void:
 	Game.add_day_flag("enc:" + def.id)
@@ -671,6 +717,28 @@ func _activity(a: Dictionary) -> void:
 	var rw: Array = a.reward[res]
 	pause(false)
 	_reward(rw[0], rw[1], "%s %s" % [a.title, {"great": "대성공!", "normal": "성공!", "fail": "아쉽다…"}[res]])
+
+## 스테이지 미션을 깨면 세월이 흘러 다음 나이로
+func _grow_up() -> void:
+	pause(true)
+	var before := stage()
+	var done := Game.age_up()
+	var after := stage()
+	Sfx.play("levelup")
+	if done:
+		await Main.inst.alert("🎉 인생 완주!", "%s까지 무사히 살아 냈어요! 모은 돈과 옷은 그대로, 새 인생을 %s부터 다시 시작해요. (완주 %d회)" % [before.label, after.label, int(Game.w().lifeDone)], "다시 태어나기")
+	else:
+		await Main.inst.alert("🎂 세월이 흘러...", "%s %d살 → %s %d살!\n이제 %s. 새로운 하루가 시작돼요." % [before.label, before.age, after.label, after.age, after.title], "좋아!")
+	var s := Game.w()
+	s.day += 1
+	s.clock = 7 * 60 + 30
+	s.dayFlags = []
+	s.hp = 100
+	s.status = ""
+	s.pos = [HOME_START.x, HOME_START.y]
+	Game.set_battery(100)
+	Game.persist()
+	Main.inst.restart_world.call_deferred()
 
 func _sleep() -> void:
 	var s := Game.w()
@@ -779,15 +847,10 @@ func get_off_bike() -> void:
 func target():
 	var s := Game.w()
 	if not Game.day_flag("commute") and not Game.day_flag("late") and s.clock <= 9 * 60:
-		return {"pos": OFFICE_DOOR, "icon": "🏢", "label": "9시 전에 회사 출근하기 (버스·지하철·자전거 추천)"}
-	var order := ["MS_301", "MS_201", "MS_101"]
-	for id in order:
-		if Game.day_flag("mission:" + id):
-			continue
-		if s.clock <= MISSION_TIME[id]:
-			for n in Game.data.npcs:
-				if n.get("missionId") == id:
-					return {"pos": Vector2(n.x, n.z), "icon": "🎯", "label": "%s %s · %s" % [Game.clock_text(MISSION_TIME[id]), MISSION_NAME[id], MISSION_WHERE[id]]}
+		return {"pos": stage_door(), "icon": "🏫", "label": stage().goal}
+	var id: String = stage().missionId
+	if not Game.day_flag("mission:" + id) and s.clock <= mission_time():
+		return {"pos": stage().npc.pos, "icon": "🎯", "label": "%s %s · %s %s" % [Game.clock_text(mission_time()), mission_name(), stage().place, stage().npc.name]}
 	if s.clock >= 21 * 60:
 		return {"pos": Vector2(Game.data.bed[0], Game.data.bed[1]), "icon": "🛏️", "label": "집에 가서 자기 → 다음 날"}
 	if Game.has_flag("wallet:have"):
@@ -804,5 +867,5 @@ func marker_for(def: Dictionary) -> String:
 		return "❗" if Game.has_flag("wallet:have") or not Game.has_flag("wallet:done") else ""
 	if def.get("missionId") != null:
 		var id: String = def.missionId
-		return "🎯" if not Game.day_flag("mission:" + id) and s.clock <= MISSION_TIME[id] else ""
+		return "🎯" if not Game.day_flag("mission:" + id) and s.clock <= mission_time() else ""
 	return ""

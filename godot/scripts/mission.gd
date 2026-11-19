@@ -1,11 +1,10 @@
-## 미션 화면: 장면 배경 + 큰 초상화 + 한 글자씩 대사. 맞춰주기/밀어붙이기, 미니게임, 결정적 한마디.
+## 미션 화면: 장면 배경 + 큰 초상화 + 한 글자씩 대사. 맞춰주기/밀어붙이기, 미니게임, 결정적 한마디, 정면 승부.
 extends Control
 
 signal finished(grade: String)
 signal _picked(i: int)
 
 const TACTIC_TAG := {"yield": "🙇 맞춰주기", "push": "⚡ 밀어붙이기"}
-const SCENE := {"MS_301": "office", "MS_201": "pasta", "MS_101": "park"}
 const NPC_OF := {"MS_301": "boss", "MS_201": "jiwoo", "MS_101": "hana"}
 
 var m: Dictionary
@@ -28,7 +27,6 @@ var prog_bar: ProgressBar
 var pat_bar: ProgressBar
 var bat_bar: ProgressBar
 var nums := {}
-var note_btn: Button
 var scene_tex: TextureRect
 var portrait: PortraitView
 var box: DialogueBox
@@ -48,15 +46,19 @@ func _clear() -> void:
 func _bg(color := Color("#e6ecf2")) -> void:
 	add_child(UI.full(UI.color_rect(color)))
 
+func _npc_id() -> String:
+	var st := Stages.by_mission(m.id)
+	return st.npc.id if not st.is_empty() else NPC_OF.get(m.id, "boss")
+
 func _npc_look() -> Dictionary:
-	return Main.inst.npc_look(NPC_OF.get(m.id, "boss"))
+	return Main.inst.npc_look(_npc_id())
 
 func _intro() -> void:
 	_clear()
-	var player = Game.active_profile()
-	compat = Game.compute_compat(player, m.npc, int(m.level))
+	# 나이가 들수록 상대가 조금씩 까다로워진다
+	compat = {"batteryMult": float(m.get("mult", 1.0 + 0.05 * Game.stage_index()))}
 	progress = 0
-	patience = clampi(compat.initFavor + 20, 30, 90)
+	patience = int(m.get("patienceStart", 55))
 	clock = int(m.startClock)
 	battery = int(Game.save.battery)
 	push_hits = 0
@@ -86,21 +88,13 @@ func _intro() -> void:
 	var cp := PanelContainer.new()
 	var cv := UI.vbox(3)
 	cp.add_child(cv)
-	cv.add_child(UI.label("첫인상 궁합 (상대 성향은 비밀!)", 12, UI.NAVY))
-	for l in compat.layers:
-		var row := UI.hbox(4)
-		var a := UI.label(Game.LAYER_NAME[l.layer], 11, UI.MUTED, HORIZONTAL_ALIGNMENT_LEFT, false)
-		a.custom_minimum_size = Vector2(60, 0)
-		row.add_child(a)
-		var b := UI.label(l.label, 11, UI.INK, HORIZONTAL_ALIGNMENT_LEFT, false)
-		b.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-		row.add_child(b)
-		row.add_child(UI.label(("+%d" if l.favor >= 0 else "%d") % l.favor, 11, UI.GOOD if l.favor >= 0 else UI.BAD, HORIZONTAL_ALIGNMENT_RIGHT, false))
-		cv.add_child(row)
-	cv.add_child(UI.label("시작 %s %d · 감소 배율 ×%s" % [m.patienceLabel, patience, str(compat.batteryMult)], 12, UI.NAVY, HORIZONTAL_ALIGNMENT_CENTER))
+	var st := Game.stage()
+	cv.add_child(UI.label("🎂 지금 나: %s %d살 · %s" % [st.label, st.age, st.title], 12, UI.NAVY, HORIZONTAL_ALIGNMENT_CENTER))
+	cv.add_child(UI.label("시작 %s %d · 감소 배율 ×%s" % [m.patienceLabel, patience, str(snappedf(compat.batteryMult, 0.01))], 12, UI.INK, HORIZONTAL_ALIGNMENT_CENTER))
+	cv.add_child(UI.label("미션을 깨면 나이를 먹고 다음 인생 단계로!", 11, UI.PINK, HORIZONTAL_ALIGNMENT_CENTER))
 	v.add_child(cp)
-	v.add_child(UI.label("🙇 맞춰주기는 안전하지만 시간이 들고 미션이 안 나아가요. ⚡ 밀어붙이기는 빠르지만, 상대 성향에 안 맞으면 %s이(가) 크게 깎여요. 🔍추리수첩으로 상대를 읽으세요." % m.patienceLabel, 11, UI.MUTED, HORIZONTAL_ALIGNMENT_CENTER))
-	if NPC_OF.get(m.id, "") in FIGHT_NPC:
+	v.add_child(UI.label("🙇 맞춰주기는 안전하지만 미션이 잘 안 나아가요. ⚡ 밀어붙이기는 빠르지만, 말을 잘못 고르면 %s이(가) 크게 깎여요. 상대 말을 잘 듣고 골라요." % m.patienceLabel, 11, UI.MUTED, HORIZONTAL_ALIGNMENT_CENTER))
+	if _npc_id() in FIGHT_NPC:
 		v.add_child(UI.label("🥊 말이 안 통하면 정면 승부가 벌어져요. 이기면 남은 대화가 유리해져요.", 11, UI.PINK, HORIZONTAL_ALIGNMENT_CENTER))
 	v.add_child(UI.button("작전 시작", func(): _shell(); _play(0), "primary", 15))
 
@@ -125,8 +119,6 @@ func _shell() -> void:
 	clock_label = UI.label("", 14, Color.WHITE, HORIZONTAL_ALIGNMENT_LEFT, false)
 	clock_label.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	top.add_child(clock_label)
-	note_btn = UI.button("🔍 수첩 0", _open_notebook, "primary", 11)
-	top.add_child(note_btn)
 	var snd := UI.button("🔇" if Sfx.muted() else "🔊", Callable(), "normal", 11)
 	snd.pressed.connect(func(): snd.text = "🔇" if Sfx.toggle() else "🔊")
 	top.add_child(snd)
@@ -156,7 +148,7 @@ func _shell() -> void:
 	body.add_child(scene)
 	scene_tex = UI.full(TextureRect.new())
 	var tag := "day" if clock < 17 * 60 + 30 else ("dusk" if clock < 19 * 60 + 30 else "night")
-	scene_tex.texture = load("res://assets/img/scene_%s_%s.png" % [SCENE.get(m.id, "office"), tag])
+	scene_tex.texture = load("res://assets/img/scene_%s_%s.png" % [Stages.SCENE.get(m.id, "office"), tag])
 	scene_tex.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
 	scene_tex.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT_COVERED
 	scene.add_child(scene_tex)
@@ -191,7 +183,6 @@ func _bars() -> void:
 	nums[keys[0]].text = str(progress)
 	nums[keys[1]].text = str(patience)
 	nums[keys[2]].text = str(battery)
-	note_btn.text = "🔍 수첩 %d" % observations.size()
 
 func _over() -> bool:
 	return patience <= 0 or clock > int(m.deadline)
@@ -228,15 +219,12 @@ func _play(i: int) -> void:
 	while i < m.beats.size() and not _over():
 		var beat: Dictionary = m.beats[i]
 		await _say(m.npcName, beat.line, beat.emotion)
-		for o in beat.observations:
-			observations.append(o)
 		_bars()
-		Main.inst.toast("🔍 관찰 %d개를 추리수첩에 적었다" % beat.observations.size(), "info")
 		if beat.get("minigame") != null:
 			await _wait()
 			var mg: Dictionary = beat.minigame
 			var hostile: bool = compat.batteryMult >= 1.3
-			var res: String = await Main.inst.run_minigame(mg.id, m.npc, hostile)
+			var res: String = await Main.inst.run_minigame(mg.id, m.get("npc", {}), hostile)
 			clock += int(mg.minutes)
 			var gain: int = int(mg.progress[res])
 			progress += gain
@@ -286,7 +274,7 @@ func _play(i: int) -> void:
 
 ## 말이 안 통할 때(크게 깎였거나 인내심이 바닥 근처) 상사와 한 번 정면 승부.
 func _should_fight(pd: int) -> bool:
-	if fought or _over() or not NPC_OF.get(m.id, "") in FIGHT_NPC:
+	if fought or _over() or not _npc_id() in FIGHT_NPC:
 		return false
 	return pd <= -15 or patience < 35
 
@@ -297,7 +285,7 @@ func _fight() -> void:
 	await _say("", "(더는 말이 안 통한다... 이번엔 물러서지 않겠어!)", "", true)
 	await _cut_in("정면 승부!")
 	var hostile: bool = compat.batteryMult >= 1.3
-	var res: String = await Main.inst.run_minigame("MG_801", m.npc, hostile)
+	var res: String = await Main.inst.run_minigame("MG_801", m.get("npc", {}), hostile)
 	print("[mission] 정면 승부 ", res)
 	clock += 10
 	if res == "fail":
@@ -338,9 +326,7 @@ func _objection(o: Dictionary) -> void:
 	for c in choices.get_children():
 		c.queue_free()
 	var go := [false]
-	var nb := UI.button("🔍 추리수첩 다시 보기", _open_notebook)
 	var ob := UI.button("%s 결정적 한마디" % o.shout, func(): go[0] = true; _picked.emit(0), "pink", 14)
-	choices.add_child(nb)
 	choices.add_child(ob)
 	await _picked
 	for c in choices.get_children():
@@ -354,15 +340,14 @@ func _objection(o: Dictionary) -> void:
 	await md.root.tree_exited
 	await _cut_in(o.shout)
 	clock += int(o.minutes)
-	var acc := _accuracy()
 	if chosen[0] == o.correctId:
-		var gain := roundi(o.progressBase + o.progressAccuracy * acc)
+		var gain := roundi(o.progressBase + o.progressAccuracy)
 		progress += gain
 		_bars()
 		await _say("", o.playerLine, "", true)
 		await _wait()
 		await _say(m.npcName, o.successLine, "HAPPY")
-		Main.inst.toast("결정적 한마디 성공! 미션 +%d (추리 정확도 %d%%)" % [gain, roundi(acc * 100)], "good")
+		Main.inst.toast("결정적 한마디 성공! 미션 +%d" % gain, "good")
 		Sfx.play("good")
 	else:
 		var pd := _pd(o.failPatience)
@@ -396,60 +381,6 @@ func _cut_in(shout: String) -> void:
 	DialogueBox.shake(l, 10)
 	await get_tree().create_timer(0.8).timeout
 	c.queue_free()
-
-func _dims() -> Array:
-	return Game.data.dimsByLevel[int(m.level) - 1]
-
-func _answer(key: String) -> String:
-	var p: Dictionary = m.npc
-	match key:
-		"EI": return p.mbti[0]
-		"SN": return p.mbti[1]
-		"TF": return p.mbti[2]
-		"JP": return p.mbti[3]
-		"BLOOD": return p.blood
-		"GEN": return Game.derive(p).gen
-	return ""
-
-func _accuracy() -> float:
-	var dims := _dims()
-	if dims.is_empty():
-		return 0.0
-	var ok := 0
-	for d in dims:
-		if guesses.get(d, "") == _answer(d):
-			ok += 1
-	return float(ok) / dims.size()
-
-func _open_notebook() -> void:
-	var md: Dictionary = Main.inst.modal("🔍 추리수첩 · " + m.npcName, 340)
-	var b: VBoxContainer = md.body
-	b.add_child(UI.label("관찰한 것", 12, UI.PINK))
-	if observations.is_empty():
-		b.add_child(UI.label("아직 없어요. 대화를 들으며 단서를 모아요.", 11, UI.MUTED))
-	for o in observations:
-		b.add_child(UI.label("· " + o, 11, UI.INK))
-	b.add_child(UI.label("내 추리 (결정적 한마디의 위력이 정확도만큼 커져요)", 12, UI.PINK))
-	for key in _dims():
-		var def: Dictionary = Game.data.dims[key]
-		b.add_child(UI.label(def.label, 11, UI.MUTED))
-		var row := UI.hbox(4)
-		var btns := []
-		for opt in def.options:
-			var bt := UI.button(opt.label, Callable(), "normal", 10)
-			bt.toggle_mode = true
-			bt.button_pressed = guesses.get(key, "") == opt.value
-			bt.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-			bt.add_theme_stylebox_override("pressed", UI.box(UI.YELLOW, UI.INK, 2, 7, 1))
-			bt.add_theme_stylebox_override("hover_pressed", UI.box(UI.YELLOW, UI.INK, 2, 7, 1))
-			btns.append(bt)
-			bt.pressed.connect(func():
-				Sfx.play("pick")
-				guesses[key] = opt.value
-				for x in btns: x.button_pressed = x == bt)
-			row.add_child(bt)
-		b.add_child(row)
-	b.add_child(UI.button("닫기", func(): md.root.queue_free(), "primary"))
 
 func _finish() -> void:
 	progress = clampi(progress, 0, 100)
@@ -498,20 +429,5 @@ func _finish() -> void:
 	var gp := PanelContainer.new()
 	gp.add_child(grid)
 	v.add_child(gp)
-	var rv := PanelContainer.new()
-	var rvv := UI.vbox(3)
-	rv.add_child(rvv)
-	rvv.add_child(UI.label("%s의 정체 · 추리 정확도 %d%%" % [m.npcName, roundi(_accuracy() * 100)], 12, UI.NAVY, HORIZONTAL_ALIGNMENT_CENTER))
-	var tags := []
-	for k in _dims():
-		var ans := _answer(k)
-		var lab := ans
-		for o in Game.data.dims[k].options:
-			if o.value == ans:
-				lab = o.label
-		tags.append(("✔ " if guesses.get(k, "") == ans else "✘ ") + lab)
-	rvv.add_child(UI.label("  ".join(tags), 11, UI.INK, HORIZONTAL_ALIGNMENT_CENTER))
-	rvv.add_child(UI.label(Game.describe(m.npc), 10, UI.MUTED, HORIZONTAL_ALIGNMENT_CENTER))
-	v.add_child(rv)
 	v.add_child(UI.button("다시 도전", _intro, "normal" if grade != "F" else "primary"))
 	v.add_child(UI.button("🏘️ 동네로 돌아가기", func(): finished.emit(best_grade), "primary" if grade != "F" else "normal"))

@@ -15,8 +15,9 @@ var npc: Dictionary
 var hostile := false
 var finished := false
 
-static func speed_factor(p: Dictionary) -> float:
-	return 1.2 if p.mbti in ["ESTJ", "ENTJ", "ESTP"] or p.blood in ["B", "O"] else 1.0
+## 나이(스테이지)가 올라갈수록 조금씩 빨라진다
+static func speed_factor(_p: Dictionary) -> float:
+	return 1.0 + 0.04 * int(Game.w().get("stage", 0))
 
 func build(stage: Control) -> void:
 	root = stage
