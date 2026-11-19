@@ -45,9 +45,67 @@ func _ready() -> void:
 	ov_root.add_child(toast_box)
 	Game.toast.connect(toast)
 	_setup_debug()
-	screen_title()
+	if _fight_only():
+		screen_fight_lobby()
+	else:
+		screen_title()
 	if "--autotest" in OS.get_cmdline_user_args():
 		add_child(preload("res://scripts/autotest.gd").new())
+
+# ---------- 격투만 하는 페이지 ----------
+## 웹 페이지가 window.FIGHT_ONLY = true 를 켜 두었거나 `-- --fight` 로 실행하면 격투 연습장으로 바로 간다.
+func _fight_only() -> bool:
+	if "--fight" in OS.get_cmdline_user_args():
+		return true
+	if OS.has_feature("web"):
+		return str(JavaScriptBridge.eval("window.FIGHT_ONLY === true", true)).to_lower() in ["true", "1"]
+	return false
+
+var fight_record := {"play": 0, "win": 0, "last": ""}
+
+func _boss_profile() -> Dictionary:
+	for mm in Game.data.missions:
+		if mm.id == "MS_301":
+			return mm.npc
+	return {"mbti": "ESTJ", "blood": "B"}
+
+func screen_fight_lobby() -> void:
+	var root := Control.new()
+	root.add_child(UI.full(UI.color_rect(Color("#2a2140"))))
+	set_screen(root)
+	var v := UI.vbox(10)
+	v.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+	v.offset_left = 20
+	v.offset_right = -20
+	v.alignment = BoxContainer.ALIGNMENT_CENTER
+	root.add_child(v)
+	v.add_child(UI.outlined(UI.label("정면 승부!", 38, UI.YELLOW, HORIZONTAL_ALIGNMENT_CENTER), UI.INK, 10))
+	v.add_child(UI.outlined(UI.label("상사와 한판 · 연습장", 14, Color.WHITE, HORIZONTAL_ALIGNMENT_CENTER), UI.INK, 5))
+	var pv := PortraitView.new(npc_look("boss"), 2)
+	pv.set_emotion("ANGRY")
+	pv.size_flags_horizontal = Control.SIZE_SHRINK_CENTER
+	v.add_child(pv)
+	var info := PanelContainer.new()
+	var iv := UI.vbox(4)
+	info.add_child(iv)
+	iv.add_child(UI.label("박 팀장의 기술: 잔소리 · 버럭! · 서류 던지기", 12, UI.NAVY, HORIZONTAL_ALIGNMENT_CENTER))
+	iv.add_child(UI.label("내 기술: 🛡️ 방어(맞기 직전이면 완벽 방어) · 🗯️ 대들기 · 💥 사이다 한마디", 11, UI.INK, HORIZONTAL_ALIGNMENT_CENTER))
+	var rec := "아직 한 판도 안 했어요" if fight_record.play == 0 else "%d판 %d승 · 지난 판 %s" % [fight_record.play, fight_record.win, fight_record.last]
+	iv.add_child(UI.label(rec, 12, UI.PINK, HORIZONTAL_ALIGNMENT_CENTER))
+	v.add_child(info)
+	v.add_child(UI.button("👊 보통 상사와 붙기", func(): _fight_round(false), "primary", 15))
+	v.add_child(UI.button("🔥 화난 상사와 붙기 (더 빠름)", func(): _fight_round(true), "pink", 14))
+	var snd := UI.button("🔇 소리 켜기" if Sfx.muted() else "🔊 소리 끄기", Callable(), "normal", 12)
+	snd.pressed.connect(func(): snd.text = "🔇 소리 켜기" if Sfx.toggle() else "🔊 소리 끄기")
+	v.add_child(snd)
+
+func _fight_round(hostile: bool) -> void:
+	var res: String = await run_minigame("MG_801", _boss_profile(), hostile)
+	fight_record.play += 1
+	if res != "fail":
+		fight_record.win += 1
+	fight_record.last = {"great": "완승!", "normal": "승리", "fail": "패배"}[res]
+	screen_fight_lobby()
 
 # ---------- 공용 ----------
 func set_screen(c: Control) -> void:

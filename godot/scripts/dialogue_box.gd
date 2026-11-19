@@ -62,7 +62,7 @@ static var _fast = null
 ## 테스트용: 주소에 ?fasttext 가 있으면 글자를 한 번에 보여 준다
 static func fast_text() -> bool:
 	if _fast == null:
-		_fast = OS.has_feature("web") and str(JavaScriptBridge.eval("location.search.indexOf('fasttext') >= 0", true)).to_lower() == "true"
+		_fast = OS.has_feature("web") and str(JavaScriptBridge.eval("location.search.indexOf('fasttext') >= 0", true)).to_lower() in ["true", "1"]
 	return _fast
 
 static func to_bbcode(s: String) -> String:

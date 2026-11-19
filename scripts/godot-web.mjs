@@ -88,4 +88,6 @@ else engine.startGame({
 </html>
 `;
 writeFileSync(out + 'index.html', html);
-for (const f of ['index.html', 'index.js', 'index.pck.b64.txt', 'index.wasm.gz.b64.txt', 'index.audio.worklet.js']) console.log(f, statSync(out + f).size);
+// 격투만 하는 페이지: 같은 엔진·데이터에 window.FIGHT_ONLY 만 켠다
+writeFileSync(out + 'fight.html', html.replace('<title>선택의 연속</title>', '<title>정면 승부</title>').replace('<div class="logo">선택의 연속</div>', '<div class="logo">정면 승부!</div>').replace('<script>\n// 엔진', '<script>window.FIGHT_ONLY = true;</script>\n<script>\n// 엔진'));
+for (const f of ['index.html', 'fight.html', 'index.js', 'index.pck.b64.txt', 'index.wasm.gz.b64.txt', 'index.audio.worklet.js']) console.log(f, statSync(out + f).size);
