@@ -20,6 +20,7 @@ const MG := {
 	"MG_701": preload("res://scripts/minigames/mg_timing.gd"),
 	"MG_702": preload("res://scripts/minigames/mg_memory.gd"),
 	"MG_703": preload("res://scripts/minigames/mg_faces.gd"),
+	"MG_801": preload("res://scripts/minigames/mg_fight.gd"),
 }
 
 func _ready() -> void:
@@ -470,6 +471,8 @@ func _on_js(args: Array) -> void:
 		"tp":
 			if world:
 				world.teleport(Vector2(cmd.x, cmd.z))
+		"mg":
+			run_minigame.call_deferred(str(cmd.id))
 		"buttons":
 			out.buttons = _buttons(get_tree().root)
 		"dbg":

@@ -19,6 +19,9 @@ var push_total := 0
 var guesses := {}
 var observations: Array = []
 var best_grade := "F"
+var fought := false
+var momentum := false
+const FIGHT_NPC := ["boss"]
 
 var clock_label: Label
 var prog_bar: ProgressBar
@@ -60,6 +63,8 @@ func _intro() -> void:
 	push_total = 0
 	guesses = {}
 	observations = []
+	fought = false
+	momentum = false
 	_bg(Color("#efe9f7"))
 	var v: VBoxContainer = Main.inst.scroll_column(self, 8)
 	v.add_child(UI.label(m.chapter, 11, UI.MUTED, HORIZONTAL_ALIGNMENT_CENTER))
@@ -95,6 +100,8 @@ func _intro() -> void:
 	cv.add_child(UI.label("시작 %s %d · 감소 배율 ×%s" % [m.patienceLabel, patience, str(compat.batteryMult)], 12, UI.NAVY, HORIZONTAL_ALIGNMENT_CENTER))
 	v.add_child(cp)
 	v.add_child(UI.label("🙇 맞춰주기는 안전하지만 시간이 들고 미션이 안 나아가요. ⚡ 밀어붙이기는 빠르지만, 상대 성향에 안 맞으면 %s이(가) 크게 깎여요. 🔍추리수첩으로 상대를 읽으세요." % m.patienceLabel, 11, UI.MUTED, HORIZONTAL_ALIGNMENT_CENTER))
+	if NPC_OF.get(m.id, "") in FIGHT_NPC:
+		v.add_child(UI.label("🥊 말이 안 통하면 정면 승부가 벌어져요. 이기면 남은 대화가 유리해져요.", 11, UI.PINK, HORIZONTAL_ALIGNMENT_CENTER))
 	v.add_child(UI.button("작전 시작", func(): _shell(); _play(0), "primary", 15))
 
 func _shell() -> void:
@@ -197,6 +204,11 @@ func _say(who: String, text: String, emotion := "", me := false) -> void:
 static func p_delta(base: float, mult: float) -> int:
 	return roundi(base * mult) if base < 0 else roundi(base)
 
+## 정면 승부에서 이기면 남은 대화 동안 인내심이 덜 깎인다.
+func _pd(base: float) -> int:
+	var d := p_delta(base, compat.batteryMult)
+	return roundi(d * 0.5) if momentum and d < 0 else d
+
 func _pick(opts: Array) -> int:
 	for c in choices.get_children():
 		c.queue_free()
@@ -229,7 +241,7 @@ func _play(i: int) -> void:
 			var gain: int = int(mg.progress[res])
 			progress += gain
 			if res == "fail":
-				patience += p_delta(mg.failPatience, compat.batteryMult)
+				patience += _pd(mg.failPatience)
 			_bars()
 			Main.inst.toast("실패… %s이(가) 깎였다" % m.patienceLabel if res == "fail" else "%s 미션 +%d" % ["대성공!" if res == "great" else "성공!", gain], "bad" if res == "fail" else "good")
 		elif beat.get("objection") != null:
@@ -241,7 +253,7 @@ func _play(i: int) -> void:
 			for o in opts:
 				labels.append("%s · %s · ⏱%d분\n%s" % [TACTIC_TAG[o.tactic], o.approach, o.minutes, o.text])
 			var o: Dictionary = opts[await _pick(labels)]
-			var pd := p_delta(o.patience, compat.batteryMult)
+			var pd := _pd(o.patience)
 			var kind := "mask" if o.tactic == "yield" else "match"
 			var bd := -roundi({"mask": 12, "match": 6}[kind] * compat.batteryMult)
 			progress += int(o.progress)
@@ -263,11 +275,45 @@ func _play(i: int) -> void:
 				Sfx.play("good")
 			await _wait()
 			await _say(m.npcName, o.reaction, o.emotion)
+			if _should_fight(pd):
+				await _wait()
+				await _fight()
 		if battery <= 0 and not await _burnout():
 			break
 		await _wait()
 		i += 1
 	_finish()
+
+## 말이 안 통할 때(크게 깎였거나 인내심이 바닥 근처) 상사와 한 번 정면 승부.
+func _should_fight(pd: int) -> bool:
+	if fought or _over() or not NPC_OF.get(m.id, "") in FIGHT_NPC:
+		return false
+	return pd <= -15 or patience < 35
+
+func _fight() -> void:
+	fought = true
+	await _say(m.npcName, "자네 지금 나한테 *대드는* 건가?!", "ANGRY")
+	await _wait()
+	await _say("", "(더는 말이 안 통한다... 이번엔 물러서지 않겠어!)", "", true)
+	await _cut_in("정면 승부!")
+	var hostile: bool = compat.batteryMult >= 1.3
+	var res: String = await Main.inst.run_minigame("MG_801", m.npc, hostile)
+	print("[mission] 정면 승부 ", res)
+	clock += 10
+	if res == "fail":
+		battery -= 15
+		_bars()
+		Main.inst.toast("기세 싸움에서 밀렸다… 배터리 -15", "bad")
+		await _say(m.npcName, "어디서 감히! 정신 차리고 다시 얘기해!", "ANGRY")
+		return
+	momentum = true
+	var pg := 35 if res == "great" else 25
+	var gg := 20 if res == "great" else 15
+	patience += pg
+	progress += gg
+	_bars()
+	Main.inst.toast("기세 승리! %s +%d · 미션 +%d · 남은 대화 동안 덜 깎임" % [m.patienceLabel.split(" ")[-1], pg, gg], "good")
+	await _say(m.npcName, "...허, 자네 생각보다 *근성* 있구먼. 좋아, 얘기 좀 들어 보지.", "HAPPY")
 
 func _burnout() -> bool:
 	var md: Dictionary = Main.inst.modal("🪫 배터리 방전!")
@@ -319,12 +365,15 @@ func _objection(o: Dictionary) -> void:
 		Main.inst.toast("결정적 한마디 성공! 미션 +%d (추리 정확도 %d%%)" % [gain, roundi(acc * 100)], "good")
 		Sfx.play("good")
 	else:
-		var pd := p_delta(o.failPatience, compat.batteryMult)
+		var pd := _pd(o.failPatience)
 		patience += pd
 		_bars()
 		await _say(m.npcName, o.failLine, "ANGRY")
 		Main.inst.toast("역공당했다! %s %d" % [m.patienceLabel, pd], "bad")
 		Sfx.play("bad")
+		if _should_fight(pd):
+			await _wait()
+			await _fight()
 
 func _cut_in(shout: String) -> void:
 	var c := UI.full(Control.new())

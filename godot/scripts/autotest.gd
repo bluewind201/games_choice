@@ -100,7 +100,7 @@ func _run() -> void:
 	press("닫기")
 	step("look " + str(Game.w().look.shirt) + " HP " + str(Game.w().hp))
 	step("미니게임 6종")
-	for id in ["MG_701", "MG_702", "MG_703", "MG_101", "MG_402", "MG_602"]:
+	for id in ["MG_701", "MG_702", "MG_703", "MG_101", "MG_402", "MG_602", "MG_801"]:
 		var res = [null]
 		var f := func(): res[0] = await main.run_minigame(id)
 		f.call()
@@ -114,6 +114,8 @@ func _run() -> void:
 			if id == "MG_602": press("제시")
 			if id == "MG_402": press("꾹 참기")
 			if id == "MG_701": press("지금")
+			if id == "MG_801":
+				press("방어"); press("대들기"); press("사이다")
 		step("  %s → %s" % [id, res[0]])
 	step("미션 MS_301")
 	Game.w().clock = 16 * 60 + 40
