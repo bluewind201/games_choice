@@ -1,0 +1,261 @@
+<title>깨진 항아리 막기</title>
+<meta name="claude:viewport-fit-sides" content="cover">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Gaegu:wght@700&family=Noto+Sans+KR:wght@400;700&display=swap">
+<style>
+/* Layout: 가운데 16:9 게임 화면(능선 산장 부엌), 아래 터치 버튼 3개와 안내. 한 가지 색 세계로 고정. */
+:root{
+  --bg:#efe9df; --ink:#2b2620; --muted:#6a5f52; --panel:#fbfaf5; --line:#d3c8b6;
+  --z:#c9733a; --x:#3f7fbf; --c:#3c8a5a;
+  --f-hand:"Gaegu","Comic Sans MS",cursive; --f-body:"Noto Sans KR",system-ui,sans-serif;
+}
+body{background:var(--bg);color:var(--ink);font-family:var(--f-body)}
+.wrap{max-width:980px;margin:0 auto;padding-block:20px 32px;padding-left:max(16px,env(safe-area-inset-left,0px));padding-right:max(16px,env(safe-area-inset-right,0px));display:grid;gap:14px}
+h1{margin:0;font-family:var(--f-hand);font-size:2rem;line-height:1.1}
+.sub{margin:2px 0 0;color:var(--muted);font-size:.9rem}
+.screen{position:relative;border:3px solid var(--ink);border-radius:14px;overflow:hidden;background:#d9c7a7;aspect-ratio:16/9;max-width:100%}
+canvas{display:block;width:100%;height:100%}
+.pads{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:10px}
+.pad{font:700 1.05rem var(--f-body);color:#fff;border:3px solid var(--ink);border-radius:14px;padding:14px 8px;cursor:pointer;touch-action:manipulation;user-select:none;-webkit-user-select:none}
+.pad small{display:block;font-weight:400;font-size:.78rem;opacity:.9}
+.pad:active,.pad.hit{transform:translateY(2px);filter:brightness(.92)}
+.pad:focus-visible,.diff button:focus-visible{outline:3px solid var(--ink);outline-offset:3px}
+#pz{background:var(--z)} #px{background:var(--x)} #pc{background:var(--c)}
+.row{display:flex;flex-wrap:wrap;gap:10px;align-items:center;justify-content:space-between}
+.diff{display:flex;gap:6px;flex-wrap:wrap}
+.diff button{font:700 .85rem var(--f-body);padding:8px 12px;border:2px solid var(--ink);border-radius:10px;background:var(--panel);color:var(--ink);cursor:pointer}
+.diff button[aria-pressed="true"]{background:var(--ink);color:var(--panel)}
+.help{background:var(--panel);border:2px dashed var(--line);border-radius:12px;padding:12px 14px;font-size:.9rem;line-height:1.6}
+.help ul{margin:6px 0 0;padding-left:18px}
+kbd{font:700 .8rem var(--f-body);border:2px solid var(--ink);border-bottom-width:3px;border-radius:6px;padding:0 6px;background:#fff}
+</style>
+
+<div class="wrap">
+  <div class="row">
+    <div>
+      <h1>깨진 항아리 막기</h1>
+      <p class="sub">4구간 「능선 산장」 · 콩쥐 사장님: "팥쥐가 깨 놓은 항아리에 물을 채워야 손님 라면을 끓여!" (게임성 테스트용, 그림은 임시)</p>
+    </div>
+    <div class="diff" role="group" aria-label="난이도">
+      <button id="d1" aria-pressed="false">1구간 쉬움</button>
+      <button id="d3" aria-pressed="true">3구간 보통</button>
+      <button id="d5" aria-pressed="false">5구간 어려움</button>
+    </div>
+  </div>
+
+  <div class="screen"><canvas id="cv" width="1280" height="720" aria-label="게임 화면"></canvas></div>
+
+  <div class="pads">
+    <button class="pad" id="pz">왼쪽 구멍<small>Z 또는 J</small></button>
+    <button class="pad" id="px">가운데 구멍<small>X 또는 K</small></button>
+    <button class="pad" id="pc">오른쪽 구멍<small>C 또는 L</small></button>
+  </div>
+
+  <div class="help">
+    <b>하는 법</b> · 시작은 <kbd>Space</kbd> 또는 화면 클릭
+    <ul>
+      <li>콩쥐 사장님이 물을 붓는 동안, 항아리 <b>왼쪽·가운데·오른쪽</b>에 금이 가며 물이 새요. 해당 버튼을 누르면 두꺼비가 구멍을 막아 줍니다.</li>
+      <li>두꺼비는 오래 못 버텨요. 두꺼비 머리 위 <b>동그라미</b>가 다 줄면 폴짝 내려가고 구멍이 다시 열려요. 다시 눌러 막아 주세요.</li>
+      <li><b>큰 구멍</b>(물이 콸콸)은 두 번 눌러야 막혀요. 구멍 없는 곳을 누르면 두꺼비가 헛디뎌 물이 조금 쏟아집니다.</li>
+      <li>30초 안에 물을 <b>빨간 선</b>까지 채우면 성공. 실패하면 라이프가 1개 깎입니다.</li>
+    </ul>
+  </div>
+</div>
+
+<script>
+(function(){
+const cv=document.getElementById('cv'), g=cv.getContext('2d');
+const W=1280,H=720, TIME=30, GOAL=100;
+const DIFF={
+  1:{crack:1.4, hold:4.5, big:0.0,  fill:6.0, label:'1구간'},
+  3:{crack:0.85,hold:3.2, big:0.3,  fill:6.0, label:'3구간'},
+  5:{crack:0.48, hold:2.2, big:0.5, fill:5.5, label:'5구간'},
+};
+const SMALL=5.0, BIG=10.0;
+let diff=3, lives=5, acorns=0;
+const S={};
+function reset(){Object.assign(S,{state:'ready',t:0,cd:3,water:8,next:1.2,msg:'',msgT:0,result:null,stars:0,spills:0,leaked:0,
+  holes:[0,1,2].map(()=>({open:false,big:false,need:0,plug:0,crackT:0})),drops:[],shake:0});}
+reset(); window.__jar=S;
+
+let ac=null;
+function beep(f,d=0.07,type='square',v=0.06){try{ac=ac||new (window.AudioContext||window.webkitAudioContext)();const o=ac.createOscillator(),gn=ac.createGain();o.type=type;o.frequency.value=f;gn.gain.value=v;gn.gain.exponentialRampToValueAtTime(0.0001,ac.currentTime+d);o.connect(gn).connect(ac.destination);o.start();o.stop(ac.currentTime+d);}catch(e){}}
+function say(m,t=0.8){S.msg=m;S.msgT=t;}
+
+function press(k){
+  if(S.state==='ready'||S.state==='result'){if(k==='start'){if(S.state==='result')reset();S.state='count';S.cd=3;beep(440,.1);}return;}
+  if(S.state!=='play'||k==='start')return;
+  const h=S.holes[k];
+  if(h.open){
+    h.need--; beep(520+k*60,.05);
+    if(h.need<=0){h.open=false;h.plug=DIFF[diff].hold;say(h.big?'큰 구멍 막았다!':'개굴!',0.5);beep(780,.08,'sine',.08);}
+  }else if(h.plug>0){h.plug=Math.min(DIFF[diff].hold,h.plug+0.6);beep(620,.04,'sine');}
+  else{S.water=Math.max(0,S.water-2.5);S.spills++;S.shake=0.2;say('헛디딤!',0.5);beep(160,.12,'sawtooth',.05);}
+}
+const map={KeyZ:0,KeyJ:0,KeyX:1,KeyK:1,KeyC:2,KeyL:2,Space:'start',Enter:'start'};
+addEventListener('keydown',e=>{if(!(e.code in map)||e.repeat)return;e.preventDefault();const k=map[e.code];press(k);if(k!=='start')flash(k);});
+function flash(k){const b=document.getElementById(['pz','px','pc'][k]);b.classList.add('hit');setTimeout(()=>b.classList.remove('hit'),80);}
+[['pz',0],['px',1],['pc',2]].forEach(([id,k])=>{const b=document.getElementById(id);b.addEventListener('pointerdown',e=>{e.preventDefault();if(S.state!=='play'){press('start');return;}press(k);});});
+cv.addEventListener('pointerdown',()=>press('start'));
+[1,3,5].forEach(n=>document.getElementById('d'+n).onclick=()=>{diff=n;[1,3,5].forEach(m=>document.getElementById('d'+m).setAttribute('aria-pressed',String(m===n)));reset();document.getElementById('d'+n).blur();});
+
+function finish(win){
+  S.state='result';S.result=win;
+  if(win){S.stars=S.t<TIME*0.6&&S.spills<=2?3:S.t<TIME*0.8?2:1;acorns+=[0,30,50,80][S.stars];beep(523,.12,'sine',.09);setTimeout(()=>beep(784,.2,'sine',.09),120);}
+  else{lives=Math.max(0,lives-1);beep(196,.3,'triangle',.08);}
+}
+function update(dt){
+  S.msgT=Math.max(0,S.msgT-dt);S.shake=Math.max(0,S.shake-dt);
+  S.drops.forEach(d=>{d.x+=d.vx*dt;d.y+=d.vy*dt;d.vy+=900*dt;d.life-=dt;});S.drops=S.drops.filter(d=>d.life>0&&d.y<H);
+  if(S.state==='count'){S.cd-=dt;if(S.cd<=0){S.state='play';beep(880,.15);say('물 붓는다!',0.7);}return;}
+  if(S.state!=='play')return;
+  const D=DIFF[diff];S.t+=dt;
+  // 새 금 생기기
+  S.next-=dt;
+  if(S.next<=0){
+    S.next=D.crack*(0.75+Math.random()*0.5);
+    const free=S.holes.map((h,i)=>(!h.open&&h.plug<=0)?i:-1).filter(i=>i>=0);
+    if(free.length){const i=free[Math.floor(Math.random()*free.length)],h=S.holes[i],big=Math.random()<D.big;
+      Object.assign(h,{open:true,big,need:big?2:1,crackT:0.25});beep(big?120:200,.12,'sawtooth',.05);if(big){S.shake=0.25;say('콸콸!',0.6);}}
+  }
+  let drain=0;
+  S.holes.forEach((h,i)=>{
+    h.crackT=Math.max(0,h.crackT-dt);
+    if(h.plug>0){h.plug-=dt;if(h.plug<=0){h.plug=0;h.open=true;h.big=false;h.need=1;say('두꺼비 지쳤다!',0.6);beep(240,.1,'triangle');}}
+    if(h.open&&S.water>holeLevel(i)){const r=h.big?BIG:SMALL;drain+=r;
+      if(Math.random()<dt*(h.big?40:18)){const p=holePos(i);S.drops.push({x:p.x,y:p.y,vx:(i-1)*120+(i===1?(Math.random()*2-1)*40:0)+(i===0?-160:i===2?160:0),vy:-40+Math.random()*40,life:1.2});}}
+  });
+  S.water=Math.max(0,S.water+(D.fill-drain)*dt); S.leaked+=drain*dt;
+  if(S.water>=GOAL){S.water=GOAL;finish(true);return;}
+  if(S.t>=TIME)finish(false);
+}
+
+// ---- 그리기 ----
+const JX=W/2, JY=640, JW=300, JH=380; // 항아리 바닥 중심, 너비, 높이
+function holeLevel(i){return [22,14,30][i];}
+function holePos(i){const lv=holeLevel(i);return {x:JX+[-150,0,150][i]*([0.92,1,0.92][i]),y:JY-JH*lv/100};}
+function jarPath(){
+  g.beginPath();
+  g.moveTo(JX-90,JY-JH);                     // 입구
+  g.bezierCurveTo(JX-110,JY-JH+40, JX-JW*0.62,JY-JH*0.72, JX-JW*0.58,JY-JH*0.45);
+  g.bezierCurveTo(JX-JW*0.55,JY-JH*0.15, JX-130,JY, JX-100,JY);
+  g.lineTo(JX+100,JY);
+  g.bezierCurveTo(JX+130,JY, JX+JW*0.55,JY-JH*0.15, JX+JW*0.58,JY-JH*0.45);
+  g.bezierCurveTo(JX+JW*0.62,JY-JH*0.72, JX+110,JY-JH+40, JX+90,JY-JH);
+  g.closePath();
+}
+function draw(){
+  const sx=S.shake>0?(Math.random()*8-4):0;
+  g.save();g.translate(sx,0);
+  // 부엌 벽·창문
+  g.fillStyle='#d9c7a7';g.fillRect(0,0,W,H);
+  g.fillStyle='#c4ad88';for(let x=0;x<W;x+=64)g.fillRect(x,0,3,H*0.72);
+  g.fillStyle='#bfe0ee';g.strokeStyle='#2b2620';g.lineWidth=5;g.beginPath();g.roundRect(70,90,250,180,10);g.fill();g.stroke();
+  g.fillStyle='#9ec28e';g.beginPath();g.moveTo(70,250);g.lineTo(150,170);g.lineTo(220,230);g.lineTo(270,190);g.lineTo(320,250);g.lineTo(320,270);g.lineTo(70,270);g.fill();
+  g.beginPath();g.moveTo(195,90);g.lineTo(195,270);g.moveTo(70,180);g.lineTo(320,180);g.stroke();
+  // 바닥
+  g.fillStyle='#a88a62';g.fillRect(0,H*0.72,W,H);g.fillStyle='#977a54';for(let x=0;x<W;x+=120)g.fillRect(x,H*0.72,4,H);
+  // 라면 냄비 (오른쪽)
+  g.fillStyle='#555';g.fillRect(1010,470,180,24);g.fillStyle='#b9c2c7';g.beginPath();g.roundRect(1030,400,140,74,10);g.fill();g.stroke();
+  g.fillStyle='#2b2620';g.font='700 18px "Noto Sans KR",sans-serif';g.textAlign='center';g.fillText('손님 라면 대기 중',1100,385);
+  // 콩쥐 사장님 (물 붓기)
+  drawKongjwi(JX+250,330);
+  // 팥쥐 (왼쪽에서 빼꼼)
+  drawPatjwi(150,560);
+  // 항아리
+  g.save();jarPath();g.clip();
+  g.fillStyle='#8a5a3a';g.fillRect(0,0,W,H);
+  const wy=JY-JH*S.water/100;
+  const wv=Math.sin(performance.now()/250)*4;
+  g.fillStyle='#5aa7d6';g.beginPath();g.moveTo(0,wy+wv);for(let x=JX-200;x<=JX+200;x+=20)g.lineTo(x,wy+Math.sin(x/30+performance.now()/200)*4);g.lineTo(W,wy);g.lineTo(W,H);g.lineTo(0,H);g.fill();
+  g.fillStyle='rgba(255,255,255,.25)';g.fillRect(JX-200,wy,400,6);
+  g.restore();
+  g.strokeStyle='#2b2620';g.lineWidth=6;jarPath();g.stroke();
+  g.fillStyle='rgba(255,255,255,.14)';g.beginPath();g.ellipse(JX-80,JY-JH*0.55,22,90,-0.2,0,7);g.fill();
+  // 목표선
+  const gy=JY-JH*GOAL/100+6;g.strokeStyle='#e8453c';g.lineWidth=4;g.setLineDash([12,8]);g.beginPath();g.moveTo(JX-130,gy);g.lineTo(JX+130,gy);g.stroke();g.setLineDash([]);
+  // 물줄기(붓는 중)
+  if(S.state==='play'){g.fillStyle='#5aa7d6';g.fillRect(JX+40,170,16,JY-JH-170+20+Math.max(0,(100-S.water))*0);}
+  // 구멍
+  S.holes.forEach((h,i)=>{const p=holePos(i);
+    if(h.open){
+      const r=h.big?24:15;
+      g.fillStyle='#2b2620';g.beginPath();g.ellipse(p.x,p.y,r,r*0.75,0,0,7);g.fill();
+      g.strokeStyle='#2b2620';g.lineWidth=3;for(let a=0;a<5;a++){const an=a*1.3+i;g.beginPath();g.moveTo(p.x+Math.cos(an)*r,p.y+Math.sin(an)*r*0.75);g.lineTo(p.x+Math.cos(an)*(r+22),p.y+Math.sin(an)*(r+16));g.stroke();}
+      if(S.water>holeLevel(i)){const dir=i===0?-1:i===2?1:0;g.strokeStyle='#5aa7d6';g.lineWidth=h.big?18:9;g.beginPath();g.moveTo(p.x,p.y);g.quadraticCurveTo(p.x+dir*90+(dir===0?0:0),p.y+(dir===0?40:-10),p.x+dir*150,p.y+(dir===0?120:110));g.stroke();}
+      if(h.big&&h.need===2){label(p.x,p.y-48,'두 번!','#e8453c');}
+    }
+    if(h.plug>0)drawToad(p.x,p.y,h.plug/DIFF[diff].hold);
+    // 버튼 표시
+    label(p.x,p.y+58,['Z','X','C'][i],['#c9733a','#3f7fbf','#3c8a5a'][i]);
+  });
+  // 물방울
+  S.drops.forEach(d=>{g.fillStyle='#5aa7d6';g.beginPath();g.arc(d.x,d.y,6,0,7);g.fill();});
+  g.restore();
+  hud();
+}
+function label(x,y,t,c){g.font='700 22px "Noto Sans KR",sans-serif';g.textAlign='center';const w=g.measureText(t).width+18;g.fillStyle=c;g.strokeStyle='#2b2620';g.lineWidth=3;g.beginPath();g.roundRect(x-w/2,y-16,w,30,8);g.fill();g.stroke();g.fillStyle='#fff';g.fillText(t,x,y+7);}
+function drawToad(x,y,k){
+  const t=performance.now()/1000;g.save();g.translate(x,y+Math.sin(t*8)*1.5*(1-k));
+  g.lineWidth=4;g.strokeStyle='#2b2620';g.fillStyle='#7bb661';
+  g.beginPath();g.ellipse(0,0,38,28,0,0,7);g.fill();g.stroke();
+  g.fillStyle='#fff';g.beginPath();g.arc(-15,-24,11,0,7);g.arc(15,-24,11,0,7);g.fill();g.stroke();
+  g.fillStyle='#2b2620';g.beginPath();g.arc(-15,-23,4,0,7);g.arc(15,-23,4,0,7);g.fill();
+  g.lineWidth=3;g.beginPath();g.arc(0,2,14,0.2,Math.PI-0.2);g.stroke();
+  g.fillStyle='#5f9a48';g.beginPath();g.arc(-12,10,5,0,7);g.arc(14,6,4,0,7);g.fill();
+  // 버티는 시간 고리
+  g.lineWidth=6;g.strokeStyle='rgba(43,38,32,.2)';g.beginPath();g.arc(0,-58,14,0,7);g.stroke();
+  g.strokeStyle=k<0.3?'#e8453c':'#3c8a5a';g.beginPath();g.arc(0,-58,14,-Math.PI/2,-Math.PI/2+Math.PI*2*k);g.stroke();
+  if(k<0.3){g.fillStyle='#7cc6ea';g.beginPath();g.ellipse(34,-24,5,8,0,0,7);g.fill();}
+  g.restore();
+}
+function drawKongjwi(x,y){
+  g.save();g.translate(x,y);g.lineWidth=4;g.strokeStyle='#2b2620';
+  g.fillStyle='#f6d7e2';g.beginPath();g.roundRect(-40,10,80,120,18);g.fill();g.stroke();
+  g.fillStyle='#fff';g.beginPath();g.roundRect(-34,40,68,80,10);g.fill();g.stroke();
+  g.fillStyle='#f1c9a4';g.beginPath();g.arc(0,-26,40,0,7);g.fill();g.stroke();
+  g.fillStyle='#2b2020';g.beginPath();g.arc(0,-36,40,Math.PI*1.02,Math.PI*1.98);g.fill();g.beginPath();g.arc(30,-50,16,0,7);g.fill();
+  g.fillStyle='#2b2620';g.beginPath();g.arc(-13,-24,4,0,7);g.arc(13,-24,4,0,7);g.fill();g.lineWidth=3;g.beginPath();g.arc(0,-12,9,0.2,Math.PI-0.2);g.stroke();
+  // 물동이
+  g.save();g.translate(-150,-120);g.rotate(0.6);g.fillStyle='#8aa0ad';g.lineWidth=4;g.beginPath();g.roundRect(-46,-30,92,60,10);g.fill();g.stroke();g.restore();
+  g.strokeStyle='#f1c9a4';g.lineWidth=12;g.beginPath();g.moveTo(-30,30);g.lineTo(-110,-80);g.moveTo(30,30);g.lineTo(-90,-110);g.stroke();
+  g.restore();
+  g.fillStyle='#2b2620';g.font='700 18px "Noto Sans KR",sans-serif';g.textAlign='center';g.fillText('콩쥐 사장님',x,y+160);
+}
+function drawPatjwi(x,y){
+  const peek=Math.sin(performance.now()/700)*10;
+  g.save();g.translate(x,y+peek);g.lineWidth=4;g.strokeStyle='#2b2620';
+  g.fillStyle='#d24b4b';g.beginPath();g.roundRect(-36,0,72,90,16);g.fill();g.stroke();
+  g.fillStyle='#f1c9a4';g.beginPath();g.arc(0,-30,34,0,7);g.fill();g.stroke();
+  g.fillStyle='#3b2a20';g.beginPath();g.arc(0,-40,34,Math.PI*1.02,Math.PI*1.98);g.fill();
+  g.fillStyle='#2b2620';g.beginPath();g.arc(-10,-30,4,0,7);g.arc(12,-30,4,0,7);g.fill();g.lineWidth=3;g.beginPath();g.moveTo(-8,-14);g.quadraticCurveTo(4,-8,12,-16);g.stroke();
+  g.restore();
+  g.fillStyle='#2b2620';g.font='700 18px "Noto Sans KR",sans-serif';g.textAlign='center';g.fillText('팥쥐 (범인)',x,y+120);
+}
+function panel(x,y,w,h){g.fillStyle='rgba(251,250,245,.94)';g.strokeStyle='#2b2620';g.lineWidth=3;g.beginPath();g.roundRect(x,y,w,h,12);g.fill();g.stroke();}
+function heart(x,y){g.beginPath();g.moveTo(x,y+10);g.bezierCurveTo(x-18,y-2,x-10,y-16,x,y-6);g.bezierCurveTo(x+10,y-16,x+18,y-2,x,y+10);g.fill();}
+function hud(){
+  g.textAlign='left';
+  panel(20,18,300,56);for(let i=0;i<5;i++){g.fillStyle=i<lives?'#e8453c':'#d8cfbf';heart(46+i*36,46);}
+  g.fillStyle='#2b2620';g.font='700 22px "Noto Sans KR",sans-serif';g.fillText('🌰 '+acorns,232,55);
+  const left=Math.max(0,TIME-S.t);panel(W-170,18,150,56);g.fillStyle=left<8?'#c0392b':'#2b2620';g.font='700 32px "Noto Sans KR",sans-serif';g.textAlign='center';g.fillText(left.toFixed(1)+'초',W-95,58);
+  panel(W/2-170,18,340,56);g.fillStyle='#2b2620';g.font='700 26px "Noto Sans KR",sans-serif';g.fillText('물 '+Math.floor(S.water)+' / '+GOAL,W/2,56);
+  g.textAlign='left';
+  if(S.msgT>0&&S.msg){g.textAlign='center';g.font='700 50px "Gaegu","Noto Sans KR",sans-serif';g.lineWidth=8;g.strokeStyle='#fff';g.strokeText(S.msg,W/2,H*0.22);g.fillStyle='#2b2620';g.fillText(S.msg,W/2,H*0.22);g.textAlign='left';}
+  if(S.state==='ready')overlay('깨진 항아리 막기',[`${DIFF[diff].label} · 제한 30초`,'금이 간 쪽 버튼(Z·X·C)으로 두꺼비를 보내 막기','Space 또는 화면을 눌러 시작']);
+  if(S.state==='count'){g.textAlign='center';g.font='700 160px "Gaegu","Noto Sans KR",sans-serif';g.lineWidth=12;g.strokeStyle='#fff';const n=Math.ceil(S.cd);g.strokeText(n,W/2,H/2+50);g.fillStyle='#2b2620';g.fillText(n,W/2,H/2+50);g.textAlign='left';}
+  if(S.state==='result'){
+    const st='★'.repeat(S.stars)+'☆'.repeat(3-S.stars);
+    if(S.result)overlay('라면 끓였다! '+st,[`${S.t.toFixed(1)}초 · 헛디딤 ${S.spills}번`,`도토리 +${[0,30,50,80][S.stars]}`,'Space 또는 화면을 눌러 다시 하기']);
+    else overlay('물이 다 샜다… 라이프 -1',[`물 ${Math.floor(S.water)} / ${GOAL}`,`남은 라이프 ${lives} · 실제 게임에선 0이면 마지막 쉼터로`,'Space 또는 화면을 눌러 다시 하기']);
+  }
+}
+function overlay(title,lines){
+  g.fillStyle='rgba(43,38,32,.55)';g.fillRect(0,0,W,H);panel(W/2-340,H/2-150,680,300);
+  g.textAlign='center';g.fillStyle='#2b2620';g.font='700 58px "Gaegu","Noto Sans KR",sans-serif';g.fillText(title,W/2,H/2-70);
+  g.font='400 24px "Noto Sans KR",sans-serif';lines.forEach((l,i)=>{g.fillStyle=i===lines.length-1?'#c9733a':'#2b2620';g.fillText(l,W/2,H/2-10+i*44);});g.textAlign='left';
+}
+let lastT=performance.now();
+function loop(now){const dt=Math.min(0.05,(now-lastT)/1000);lastT=now;update(dt);draw();requestAnimationFrame(loop);}
+requestAnimationFrame(loop);
+})();
+</script>
