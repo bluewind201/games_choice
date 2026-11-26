@@ -1,0 +1,244 @@
+<title>계단 오르기 경주</title>
+<meta name="claude:viewport-fit-sides" content="cover">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Gaegu:wght@700&family=Noto+Sans+KR:wght@400;700&display=swap">
+<style>
+/* Layout: 가운데 16:9 게임 화면, 아래에 터치용 버튼 3개와 조작 안내. 한 가지 색 세계(아침 산)로 고정. */
+:root{
+  --bg:#e9efe6; --ink:#2b2620; --muted:#5d6a5a; --panel:#fbfaf5; --line:#c9d3c4;
+  --z:#e36b3c; --x:#3f7fbf; --c:#3c8a5a;
+  --f-hand:"Gaegu","Comic Sans MS",cursive; --f-body:"Noto Sans KR",system-ui,sans-serif;
+}
+body{background:var(--bg);color:var(--ink);font-family:var(--f-body)}
+.wrap{max-width:980px;margin:0 auto;padding-block:20px 32px;padding-left:max(16px,env(safe-area-inset-left,0px));padding-right:max(16px,env(safe-area-inset-right,0px));display:grid;gap:14px}
+h1{margin:0;font-family:var(--f-hand);font-size:2rem;line-height:1.1}
+.sub{margin:2px 0 0;color:var(--muted);font-size:.9rem}
+.screen{position:relative;border:3px solid var(--ink);border-radius:14px;overflow:hidden;background:#cfe3ea;aspect-ratio:16/9;max-width:100%}
+canvas{display:block;width:100%;height:100%}
+.pads{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:10px}
+.pad{font:700 1.05rem var(--f-body);color:#fff;border:3px solid var(--ink);border-radius:14px;padding:14px 8px;cursor:pointer;touch-action:manipulation;user-select:none;-webkit-user-select:none}
+.pad small{display:block;font-weight:400;font-size:.78rem;opacity:.9}
+.pad:active,.pad.hit{transform:translateY(2px);filter:brightness(.92)}
+.pad:focus-visible,.diff button:focus-visible{outline:3px solid var(--ink);outline-offset:3px}
+#pz{background:var(--z)} #px{background:var(--x)} #pc{background:var(--c)}
+.row{display:flex;flex-wrap:wrap;gap:10px;align-items:center;justify-content:space-between}
+.diff{display:flex;gap:6px;flex-wrap:wrap}
+.diff button{font:700 .85rem var(--f-body);padding:8px 12px;border:2px solid var(--ink);border-radius:10px;background:var(--panel);color:var(--ink);cursor:pointer}
+.diff button[aria-pressed="true"]{background:var(--ink);color:var(--panel)}
+.help{background:var(--panel);border:2px dashed var(--line);border-radius:12px;padding:12px 14px;font-size:.9rem;line-height:1.6}
+.help b{font-weight:700}
+.help ul{margin:6px 0 0;padding-left:18px}
+kbd{font:700 .8rem var(--f-body);border:2px solid var(--ink);border-bottom-width:3px;border-radius:6px;padding:0 6px;background:#fff}
+</style>
+
+<div class="wrap">
+  <div class="row">
+    <div>
+      <h1>계단 오르기 경주</h1>
+      <p class="sub">3구간 「단풍 오르막」 · 등산 동호회 철봉 아저씨와 정상 계단까지 70칸 대결 (게임성 테스트용, 그림은 임시)</p>
+    </div>
+    <div class="diff" role="group" aria-label="난이도">
+      <button id="d1" aria-pressed="false">1구간 쉬움</button>
+      <button id="d3" aria-pressed="true">3구간 보통</button>
+      <button id="d5" aria-pressed="false">5구간 어려움</button>
+    </div>
+  </div>
+
+  <div class="screen"><canvas id="cv" width="1280" height="720" aria-label="게임 화면"></canvas></div>
+
+  <div class="pads">
+    <button class="pad" id="pz">왼발<small>Z 또는 J</small></button>
+    <button class="pad" id="px">오른발<small>X 또는 K</small></button>
+    <button class="pad" id="pc">심호흡<small>C 또는 L</small></button>
+  </div>
+
+  <div class="help">
+    <b>하는 법</b> · 시작은 <kbd>Space</kbd> 또는 화면 클릭
+    <ul>
+      <li><b>왼발·오른발을 번갈아</b> 눌러야 한 칸 올라가요. 같은 발을 두 번 누르면 휘청해서 잠깐 멈춥니다.</li>
+      <li>올라갈수록 <b>숨 게이지</b>가 차요. 꽉 차면 1.6초 동안 헉헉대며 멈춥니다.</li>
+      <li><b>심호흡</b>은 게이지가 <b>초록 구간</b>일 때 누르면 숨이 크게 내려가고 2초 동안 발이 가벼워져요. 너무 일찍 누르면 조금밖에 안 줄고 잠깐 멈춥니다.</li>
+      <li>40초 안에 아저씨보다 먼저 꼭대기에 닿으면 승리. 지면 라이프가 1개 깎입니다.</li>
+    </ul>
+  </div>
+</div>
+
+<script>
+(function(){
+const cv=document.getElementById('cv'), g=cv.getContext('2d');
+const W=1280,H=720, STEPS=70, TIME=40;
+const DIFF={
+  1:{rival:3.2, breath:5.0, label:'1구간'},
+  3:{rival:4.2, breath:6.0, label:'3구간'},
+  5:{rival:5.6, breath:8.0, label:'5구간'},
+};
+let diff=3;
+const S={};
+let lives=5, acorns=0;
+function reset(){
+  Object.assign(S,{state:'ready',t:0,cd:3,p:0,r:0,last:null,stun:0,gasp:0,breath:20,boost:0,
+    rNext:0,rPause:0,lastStep:-1,msg:'',msgT:0,result:null,stars:0,pLeg:0,rLeg:0,shake:0,parts:[]});
+}
+reset();
+
+// ---------- 소리 ----------
+let ac=null;
+function beep(f,d=0.07,type='square',v=0.06){try{ac=ac||new (window.AudioContext||window.webkitAudioContext)();const o=ac.createOscillator(),gn=ac.createGain();o.type=type;o.frequency.value=f;gn.gain.value=v;gn.gain.exponentialRampToValueAtTime(0.0001,ac.currentTime+d);o.connect(gn).connect(ac.destination);o.start();o.stop(ac.currentTime+d);}catch(e){}}
+
+// ---------- 입력 ----------
+function say(m,t=0.8){S.msg=m;S.msgT=t;}
+function press(k){
+  if(S.state==='ready'||S.state==='result'){ if(k==='start'){ if(S.state==='result')reset(); S.state='count'; S.cd=3; beep(440,.1); } return; }
+  if(S.state!=='play')return;
+  if(k==='start')return;
+  if(S.gasp>0||S.stun>0)return;
+  if(k==='C'){
+    const D=DIFF[diff];
+    if(S.breath>=62&&S.breath<=94){S.breath=Math.max(0,S.breath-55);S.boost=2;S.stun=0.3;say('좋은 호흡!');beep(660,.12,'sine',.08);puff(true);}
+    else{S.breath=Math.max(0,S.breath-15);S.stun=0.6;say(S.breath<40?'아직 괜찮은데…':'늦었다!');beep(220,.1,'sine');puff(false);}
+    return;
+  }
+  if(k===S.last){S.stun=0.5;S.shake=0.25;say('휘청!');beep(140,.15,'sawtooth',.05);S.last=null;return;}
+  if(S.t-S.lastStep<0.13){S.last=k;return;} S.lastStep=S.t;
+  S.last=k; S.p=Math.min(STEPS,S.p+1); S.pLeg^=1;
+  S.breath+= S.boost>0? DIFF[diff].breath*0.6 : DIFF[diff].breath;
+  beep(k==='Z'?520:600,.04);
+  if(S.breath>=100){S.breath=100;S.gasp=1.6;say('헉… 헉…',1.6);beep(110,.3,'triangle',.08);}
+  if(S.p>=STEPS)finish(true);
+}
+function puff(good){for(let i=0;i<(good?10:4);i++)S.parts.push({x:0,y:0,vx:(Math.random()*2-1)*80,vy:-40-Math.random()*60,life:.7});}
+const map={KeyZ:'Z',KeyJ:'Z',KeyX:'X',KeyK:'X',KeyC:'C',KeyL:'C',Space:'start',Enter:'start'};
+addEventListener('keydown',e=>{const k=map[e.code];if(!k||e.repeat)return;if(e.target.closest&&e.target.closest('.diff'))return;e.preventDefault();press(k);flashPad(k);});
+function flashPad(k){const el={Z:'pz',X:'px',C:'pc'}[k];if(!el)return;const b=document.getElementById(el);b.classList.add('hit');setTimeout(()=>b.classList.remove('hit'),80);}
+[['pz','Z'],['px','X'],['pc','C']].forEach(([id,k])=>{const b=document.getElementById(id);b.addEventListener('pointerdown',e=>{e.preventDefault();if(S.state!=='play'){press('start');return;}press(k);});b.addEventListener('click',e=>e.preventDefault());});
+cv.addEventListener('pointerdown',()=>press('start'));
+[1,3,5].forEach(n=>document.getElementById('d'+n).onclick=()=>{diff=n;[1,3,5].forEach(m=>document.getElementById('d'+m).setAttribute('aria-pressed',String(m===n)));reset();document.getElementById('d'+n).blur();});
+window.__race=S;
+
+function finish(win){
+  S.state='result';S.result=win;
+  if(win){const margin=S.p-S.r;S.stars=margin>12?3:margin>5?2:1;const gain=[0,30,50,80][S.stars];acorns+=gain;say('',0);beep(523,.12,'sine',.09);setTimeout(()=>beep(784,.2,'sine',.09),120);}
+  else{lives=Math.max(0,lives-1);beep(196,.3,'triangle',.08);}
+}
+
+// ---------- 갱신 ----------
+function update(dt){
+  S.msgT=Math.max(0,S.msgT-dt); S.shake=Math.max(0,S.shake-dt);
+  S.parts.forEach(p=>{p.x+=p.vx*dt;p.y+=p.vy*dt;p.life-=dt;}); S.parts=S.parts.filter(p=>p.life>0);
+  if(S.state==='count'){S.cd-=dt; if(S.cd<=0){S.state='play';beep(880,.15);say('출발!',0.7);} return;}
+  if(S.state!=='play')return;
+  S.t+=dt;
+  S.stun=Math.max(0,S.stun-dt); S.boost=Math.max(0,S.boost-dt);
+  if(S.gasp>0){S.gasp-=dt; if(S.gasp<=0){S.breath=55;}}
+  else S.breath=Math.max(0,S.breath-3*dt);
+  // 아저씨: 일정 속도 + 12칸마다 잠깐 숨 고르기
+  if(S.rPause>0)S.rPause-=dt;
+  else{S.rNext+=dt*DIFF[diff].rival*(0.9+Math.random()*0.2); while(S.rNext>=1){S.rNext-=1;S.r=Math.min(STEPS,S.r+1);S.rLeg^=1; if(S.r%12===0)S.rPause=0.7;}}
+  if(S.r>=STEPS){finish(false);return;}
+  if(S.t>=TIME){finish(false);}
+}
+
+// ---------- 그리기 ----------
+const STEP_W=46, STEP_H=30;
+function stepPos(i){return {x:i*STEP_W, y:-i*STEP_H};}
+function draw(){
+  const camI=S.p+2, cam=stepPos(camI);
+  const ox=W*0.42-cam.x+(S.shake>0?(Math.random()*8-4):0), oy=H*0.66-cam.y;
+  // 하늘·먼 산
+  const sky=g.createLinearGradient(0,0,0,H);sky.addColorStop(0,'#bcdbe8');sky.addColorStop(1,'#f3e2c8');g.fillStyle=sky;g.fillRect(0,0,W,H);
+  g.fillStyle='#d9c3a8';g.beginPath();g.moveTo(0,H*0.62);for(let x=0;x<=W;x+=80)g.lineTo(x,H*0.62-60-Math.sin((x+S.p*6)/170)*50);g.lineTo(W,H);g.lineTo(0,H);g.fill();
+  // 단풍 나무 (배경)
+  for(let i=-2;i<14;i++){const tx=((i*170-S.p*18)%(W+340)+W+340)%(W+340)-170, ty=H*0.6-((i*37)%60);
+    g.fillStyle='#6b4a33';g.fillRect(tx-5,ty,10,60);g.fillStyle=i%3?'#e36b3c':'#f2a33a';g.beginPath();g.arc(tx,ty,40,0,7);g.fill();g.fillStyle=i%2?'#c9472b':'#e8873a';g.beginPath();g.arc(tx-22,ty+12,26,0,7);g.arc(tx+24,ty+10,24,0,7);g.fill();}
+  // 계단
+  g.save();g.translate(ox,oy);
+  for(let i=Math.max(0,camI-20);i<=Math.min(STEPS+3,camI+20);i++){
+    const p=stepPos(i);
+    g.fillStyle=i>STEPS?'#d8cfbf':(i%10===0?'#b9a98f':'#cbbd a3'.replace(' ',''));
+    g.fillStyle=i%10===0?'#b9a98f':'#cbbda3';
+    g.fillRect(p.x,p.y,STEP_W+1,H);
+    g.fillStyle='#8e7f69';g.fillRect(p.x,p.y,STEP_W+1,5);
+    if(i%10===0&&i>0&&i<STEPS){g.fillStyle='#5d4e3b';g.font='700 18px "Noto Sans KR",sans-serif';g.fillText(i,p.x+10,p.y+28);}
+  }
+  // 정상 깃발
+  const top=stepPos(STEPS);g.fillStyle='#5d4e3b';g.fillRect(top.x+18,top.y-110,6,110);g.fillStyle='#e8453c';g.beginPath();g.moveTo(top.x+24,top.y-110);g.lineTo(top.x+80,top.y-92);g.lineTo(top.x+24,top.y-74);g.fill();
+  g.fillStyle='#2b2620';g.font='700 22px "Noto Sans KR",sans-serif';g.fillText('정상!',top.x+30,top.y-120);
+  // 캐릭터
+  const rp=stepPos(S.r), pp=stepPos(S.p);
+  drawSD(rp.x+STEP_W*0.5,rp.y,'#3c8a5a','#f3d36b',S.rLeg,S.rPause>0,'아저씨',true);
+  drawSD(pp.x+STEP_W*0.5,pp.y,'#e36b3c','#3b2a20',S.pLeg,S.gasp>0||S.stun>0,'나',false);
+  // 입김
+  S.parts.forEach(p=>{g.globalAlpha=Math.max(0,p.life/0.7);g.fillStyle='#fff';g.beginPath();g.arc(pp.x+STEP_W*0.5+30+p.x,pp.y-120+p.y,10,0,7);g.fill();g.globalAlpha=1;});
+  g.restore();
+  hud();
+}
+function drawSD(x,y,shirt,hair,leg,tired,name,rival){
+  const bob=tired?Math.sin(performance.now()/90)*3:0;
+  g.save();g.translate(x,y+bob);g.lineWidth=4;g.strokeStyle='#2b2620';g.lineJoin=g.lineCap='round';
+  // 다리
+  g.fillStyle='#4a5a7a';
+  const a=leg?1:-1;
+  g.beginPath();g.roundRect(-16+a*4,-48,13,40,5);g.fill();g.stroke();
+  g.beginPath();g.roundRect(3-a*4,-48+(leg?-10:0),13,40,5);g.fill();g.stroke();
+  // 몸
+  g.fillStyle=shirt;g.beginPath();g.roundRect(-24,-92,48,50,14);g.fill();g.stroke();
+  if(rival){g.fillStyle='#c0392b';g.fillRect(-24,-70,48,6);}
+  // 머리
+  g.fillStyle='#f1c9a4';g.beginPath();g.arc(0,-122,34,0,7);g.fill();g.stroke();
+  g.fillStyle=hair;g.beginPath();g.arc(0,-130,34,Math.PI*1.05,Math.PI*1.95);g.fill();
+  if(rival){g.fillStyle='#f3d36b';g.beginPath();g.ellipse(0,-150,36,10,0,0,7);g.fill();g.stroke();}
+  // 얼굴
+  g.fillStyle='#2b2620';
+  if(tired){g.lineWidth=3;g.beginPath();g.moveTo(-14,-124);g.lineTo(-6,-120);g.moveTo(14,-124);g.lineTo(6,-120);g.stroke();g.beginPath();g.ellipse(0,-104,6,8,0,0,7);g.fill();
+    g.fillStyle='#7cc6ea';g.beginPath();g.ellipse(30,-140,5,8,0,0,7);g.fill();}
+  else{g.beginPath();g.arc(-11,-122,4,0,7);g.arc(11,-122,4,0,7);g.fill();g.lineWidth=3;g.beginPath();g.arc(0,-110,8,0.2,Math.PI-0.2);g.stroke();}
+  // 이름표
+  g.font='700 20px "Noto Sans KR",sans-serif';g.textAlign='center';const tw=g.measureText(name).width+16;
+  g.fillStyle=rival?'#3c8a5a':'#e36b3c';g.beginPath();g.roundRect(-tw/2,-196,tw,28,8);g.fill();g.fillStyle='#fff';g.fillText(name,0,-175);
+  g.restore();
+}
+function hud(){
+  g.textAlign='left';
+  // 상단: 라이프, 도토리, 시간
+  panel(20,18,300,56);
+  g.font='28px sans-serif';for(let i=0;i<5;i++){g.fillStyle=i<lives?'#e8453c':'#d8cfbf';heart(46+i*36,46);}
+  g.fillStyle='#2b2620';g.font='700 22px "Noto Sans KR",sans-serif';g.fillText('🌰 '+acorns,232,55);
+  const left=Math.max(0,TIME-S.t);panel(W-170,18,150,56);g.fillStyle=left<10?'#c0392b':'#2b2620';g.font='700 32px "Noto Sans KR",sans-serif';g.textAlign='center';g.fillText(left.toFixed(1)+'초',W-95,58);g.textAlign='left';
+  // 진행 막대
+  panel(W/2-260,18,520,56);
+  const bx=W/2-240,bw=480;g.fillStyle='#e7e1d4';g.beginPath();g.roundRect(bx,40,bw,14,7);g.fill();
+  mark(bx+bw*S.r/STEPS,'#3c8a5a','아저씨',28);mark(bx+bw*S.p/STEPS,'#e36b3c','나',70);
+  // 숨 게이지
+  panel(20,H-92,460,72);
+  g.fillStyle='#2b2620';g.font='700 20px "Noto Sans KR",sans-serif';g.fillText('숨',40,H-48);
+  const gx=80,gw=380,gy=H-66;g.fillStyle='#e7e1d4';g.beginPath();g.roundRect(gx,gy,gw,26,8);g.fill();
+  g.fillStyle='rgba(60,138,90,.28)';g.fillRect(gx+gw*0.62,gy,gw*0.32,26);
+  g.fillStyle=S.gasp>0?'#c0392b':S.breath>=62&&S.breath<=94?'#3c8a5a':S.breath>94?'#e8873a':'#7aa3c8';g.beginPath();g.roundRect(gx,gy,gw*S.breath/100,26,8);g.fill();
+  g.strokeStyle='#2b2620';g.lineWidth=3;g.beginPath();g.roundRect(gx,gy,gw,26,8);g.stroke();
+  g.fillStyle='#3c8a5a';g.font='700 14px "Noto Sans KR",sans-serif';g.fillText('심호흡 타이밍',gx+gw*0.64,gy-6);
+  if(S.boost>0){panel(500,H-92,190,72);g.fillStyle='#3c8a5a';g.font='700 22px "Noto Sans KR",sans-serif';g.fillText('발이 가벼워!',520,H-48);}
+  // 메시지
+  if(S.msgT>0&&S.msg){g.textAlign='center';g.font='700 54px "Gaegu","Noto Sans KR",sans-serif';g.lineWidth=8;g.strokeStyle='#fff';g.strokeText(S.msg,W/2,H*0.3);g.fillStyle='#2b2620';g.fillText(S.msg,W/2,H*0.3);g.textAlign='left';}
+  // 화면 상태
+  if(S.state==='ready')overlay('계단 오르기 경주',[`${DIFF[diff].label} · 70칸 · 제한 40초`,'왼발(Z)·오른발(X) 번갈아 연타, 숨 차면 심호흡(C)','Space 또는 화면을 눌러 시작']);
+  if(S.state==='count'){g.textAlign='center';g.font='700 160px "Gaegu","Noto Sans KR",sans-serif';g.lineWidth=12;g.strokeStyle='#fff';const n=Math.ceil(S.cd);g.strokeText(n,W/2,H/2+50);g.fillStyle='#2b2620';g.fillText(n,W/2,H/2+50);g.textAlign='left';}
+  if(S.state==='result'){
+    const st='★'.repeat(S.stars)+'☆'.repeat(3-S.stars);
+    if(S.result)overlay('이겼다! '+st,[`${S.t.toFixed(1)}초 · 아저씨보다 ${S.p-S.r}칸 앞`,`도토리 +${[0,30,50,80][S.stars]}`,'Space 또는 화면을 눌러 다시 하기']);
+    else overlay(lives>0?'졌다… 라이프 -1':'라이프가 바닥났어요',[S.t>=TIME?'시간 초과':'아저씨가 먼저 도착',`남은 라이프 ${lives} · 실제 게임에선 0이면 마지막 쉼터로`,'Space 또는 화면을 눌러 다시 하기']);
+  }
+}
+function panel(x,y,w,h){g.fillStyle='rgba(251,250,245,.92)';g.strokeStyle='#2b2620';g.lineWidth=3;g.beginPath();g.roundRect(x,y,w,h,12);g.fill();g.stroke();}
+function heart(x,y){g.beginPath();g.moveTo(x,y+10);g.bezierCurveTo(x-18,y-2,x-10,y-16,x,y-6);g.bezierCurveTo(x+10,y-16,x+18,y-2,x,y+10);g.fill();}
+function mark(x,c,t,yy){g.fillStyle=c;g.beginPath();g.arc(x,47,10,0,7);g.fill();g.strokeStyle='#2b2620';g.lineWidth=2;g.stroke();}
+function overlay(title,lines){
+  g.fillStyle='rgba(43,38,32,.55)';g.fillRect(0,0,W,H);
+  panel(W/2-330,H/2-150,660,300);
+  g.textAlign='center';g.fillStyle='#2b2620';g.font='700 60px "Gaegu","Noto Sans KR",sans-serif';g.fillText(title,W/2,H/2-70);
+  g.font='400 24px "Noto Sans KR",sans-serif';lines.forEach((l,i)=>{g.fillStyle=i===lines.length-1?'#e36b3c':'#2b2620';g.fillText(l,W/2,H/2-10+i*44);});
+  g.textAlign='left';
+}
+let lastT=performance.now();
+function loop(now){const dt=Math.min(0.05,(now-lastT)/1000);lastT=now;update(dt);draw();requestAnimationFrame(loop);}
+requestAnimationFrame(loop);
+})();
+</script>
