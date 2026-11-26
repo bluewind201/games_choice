@@ -67,8 +67,8 @@ kbd{font:700 .8rem var(--f-body);border:2px solid var(--ink);border-bottom-width
 const cv=document.getElementById('cv'), g=cv.getContext('2d');
 const W=1280,H=720, STEPS=70, TIME=40;
 const DIFF={
-  1:{rival:3.2, breath:5.0, label:'1구간'},
-  3:{rival:4.2, breath:6.0, label:'3구간'},
+  1:{rival:3.6, breath:5.0, label:'1구간'},
+  3:{rival:4.7, breath:6.0, label:'3구간'},
   5:{rival:5.6, breath:8.0, label:'5구간'},
 };
 let diff=3;
@@ -76,7 +76,7 @@ const S={};
 let lives=5, acorns=0;
 function reset(){
   Object.assign(S,{state:'ready',t:0,cd:3,p:0,r:0,last:null,stun:0,gasp:0,breath:20,boost:0,
-    rNext:0,rPause:0,lastStep:-1,msg:'',msgT:0,result:null,stars:0,pLeg:0,rLeg:0,shake:0,parts:[]});
+    rNext:0,rPause:0,lastStep:-1,msg:'',msgT:0,result:null,stars:0,pLeg:0,rLeg:0,shake:0,parts:[],pv:0,rv:0,cam:2,pLand:0,rLand:0});
 }
 reset();
 
@@ -90,7 +90,7 @@ function press(k){
   if(S.state==='ready'||S.state==='result'){ if(k==='start'){ if(S.state==='result')reset(); S.state='count'; S.cd=3; beep(440,.1); } return; }
   if(S.state!=='play')return;
   if(k==='start')return;
-  if(S.gasp>0||S.stun>0)return;
+  if(S.gasp>0||S.stun>0){S.last=null;return;}
   if(k==='C'){
     const D=DIFF[diff];
     if(S.breath>=62&&S.breath<=94){S.breath=Math.max(0,S.breath-55);S.boost=2;S.stun=0.3;say('좋은 호흡!');beep(660,.12,'sine',.08);puff(true);}
@@ -124,9 +124,16 @@ function finish(win){
 function update(dt){
   S.msgT=Math.max(0,S.msgT-dt); S.shake=Math.max(0,S.shake-dt);
   S.parts.forEach(p=>{p.x+=p.vx*dt;p.y+=p.vy*dt;p.life-=dt;}); S.parts=S.parts.filter(p=>p.life>0);
+  S.cam+=(S.pv+2-S.cam)*Math.min(1,dt*6);
   if(S.state==='count'){S.cd-=dt; if(S.cd<=0){S.state='play';beep(880,.15);say('출발!',0.7);} return;}
   if(S.state!=='play')return;
   S.t+=dt;
+  // 보이는 위치를 실제 칸으로 부드럽게 따라가게 (순간이동 대신 한 칸씩 올라타기)
+  const pv0=S.pv, rv0=S.rv;
+  S.pv+=(S.p-S.pv)*Math.min(1,dt*16); S.rv+=(S.r-S.rv)*Math.min(1,dt*16);
+  if(Math.floor(S.pv+0.08)>Math.floor(pv0+0.08))S.pLand=0.12;
+  if(Math.floor(S.rv+0.08)>Math.floor(rv0+0.08))S.rLand=0.12;
+  S.pLand=Math.max(0,S.pLand-dt); S.rLand=Math.max(0,S.rLand-dt);
   S.stun=Math.max(0,S.stun-dt); S.boost=Math.max(0,S.boost-dt);
   if(S.gasp>0){S.gasp-=dt; if(S.gasp<=0){S.breath=55;}}
   else S.breath=Math.max(0,S.breath-3*dt);
@@ -141,7 +148,7 @@ function update(dt){
 const STEP_W=46, STEP_H=30;
 function stepPos(i){return {x:i*STEP_W, y:-i*STEP_H};}
 function draw(){
-  const camI=S.p+2, cam=stepPos(camI);
+  const camI=Math.round(S.cam), cam=stepPos(S.cam);
   const ox=W*0.42-cam.x+(S.shake>0?(Math.random()*8-4):0), oy=H*0.66-cam.y;
   // 하늘·먼 산
   const sky=g.createLinearGradient(0,0,0,H);sky.addColorStop(0,'#bcdbe8');sky.addColorStop(1,'#f3e2c8');g.fillStyle=sky;g.fillRect(0,0,W,H);
@@ -163,38 +170,60 @@ function draw(){
   const top=stepPos(STEPS);g.fillStyle='#5d4e3b';g.fillRect(top.x+18,top.y-110,6,110);g.fillStyle='#e8453c';g.beginPath();g.moveTo(top.x+24,top.y-110);g.lineTo(top.x+80,top.y-92);g.lineTo(top.x+24,top.y-74);g.fill();
   g.fillStyle='#2b2620';g.font='700 22px "Noto Sans KR",sans-serif';g.fillText('정상!',top.x+30,top.y-120);
   // 캐릭터
-  const rp=stepPos(S.r), pp=stepPos(S.p);
-  drawSD(rp.x+STEP_W*0.5,rp.y,'#3c8a5a','#f3d36b',S.rLeg,S.rPause>0,'아저씨',true);
-  drawSD(pp.x+STEP_W*0.5,pp.y,'#e36b3c','#3b2a20',S.pLeg,S.gasp>0||S.stun>0,'나',false);
+  const rp=stepPos(S.rv), pp=stepPos(S.pv);
+  drawSD(rp.x+STEP_W*0.5,rp.y,'#3c8a5a','#f3d36b',S.rv,S.r-S.rv,S.rLand,S.rPause>0,'아저씨',true);
+  drawSD(pp.x+STEP_W*0.5,pp.y,'#e36b3c','#3b2a20',S.pv,S.p-S.pv,S.pLand,S.gasp>0||S.stun>0,'나',false);
   // 입김
-  S.parts.forEach(p=>{g.globalAlpha=Math.max(0,p.life/0.7);g.fillStyle='#fff';g.beginPath();g.arc(pp.x+STEP_W*0.5+30+p.x,pp.y-120+p.y,10,0,7);g.fill();g.globalAlpha=1;});
+  S.parts.forEach(p=>{g.globalAlpha=Math.max(0,p.life/0.7);g.fillStyle='#fff';g.beginPath();g.arc(pp.x+STEP_W*0.5+40+p.x,pp.y-130+p.y,10,0,7);g.fill();g.globalAlpha=1;});
   g.restore();
   hud();
 }
-function drawSD(x,y,shirt,hair,leg,tired,name,rival){
-  const bob=tired?Math.sin(performance.now()/90)*3:0;
-  g.save();g.translate(x,y+bob);g.lineWidth=4;g.strokeStyle='#2b2620';g.lineJoin=g.lineCap='round';
-  // 다리
-  g.fillStyle='#4a5a7a';
-  const a=leg?1:-1;
-  g.beginPath();g.roundRect(-16+a*4,-48,13,40,5);g.fill();g.stroke();
-  g.beginPath();g.roundRect(3-a*4,-48+(leg?-10:0),13,40,5);g.fill();g.stroke();
-  // 몸
-  g.fillStyle=shirt;g.beginPath();g.roundRect(-24,-92,48,50,14);g.fill();g.stroke();
-  if(rival){g.fillStyle='#c0392b';g.fillRect(-24,-70,48,6);}
+function drawSD(x,y,shirt,hair,pos,lag,land,tired,name,rival){
+  const now=performance.now()/1000;
+  const moving=lag>0.04;
+  const f=pos%1;                         // 한 칸 안에서의 진행 (0~1)
+  const hop=moving?Math.sin(f*Math.PI)*16:0;         // 칸 사이를 살짝 뛰어오르는 곡선
+  const breathe=tired?Math.sin(now*14)*3:Math.sin(now*3)*1.5;
+  const squash=land>0?1-land*0.6:1;     // 착지할 때 살짝 눌림
+  const lean=tired?0.18:(moving?0.16:0.05);
+  const ph=pos*Math.PI;                 // 걸음 위상: 한 칸에 반 주기
+  const legA=Math.sin(ph), legB=-legA;
+  g.save();g.translate(x,y-hop);g.scale(1/squash*0.98+0.02,squash);
+  g.lineWidth=4;g.strokeStyle='#2b2620';g.lineJoin=g.lineCap='round';
+  // 다리 (무릎 굽힘: 앞으로 나가는 다리는 들어 올림)
+  const leg=(dx,a)=>{const lift=Math.max(0,a)*14, fwd=a*9;
+    g.strokeStyle='#2b2620';g.lineWidth=17;g.beginPath();g.moveTo(dx,-46);g.lineTo(dx+fwd*0.6+6*Math.max(0,a),-28-lift);g.lineTo(dx+fwd,-6-lift*0.6);g.stroke();
+    g.strokeStyle='#4a5a7a';g.lineWidth=11;g.beginPath();g.moveTo(dx,-46);g.lineTo(dx+fwd*0.6+6*Math.max(0,a),-28-lift);g.lineTo(dx+fwd,-6-lift*0.6);g.stroke();
+    g.fillStyle='#6b4a33';g.strokeStyle='#2b2620';g.lineWidth=3;g.beginPath();g.ellipse(dx+fwd+5,-4-lift*0.6,11,6,0,0,7);g.fill();g.stroke();};
+  leg(-8,legB);leg(8,legA);
+  // 상체 (앞으로 기울이고 숨쉬기)
+  g.save();g.translate(0,-46);g.rotate(lean);g.translate(0,breathe*0.3);
+  // 뒷팔
+  const arm=(sw,front)=>{g.strokeStyle='#2b2620';g.lineWidth=14;g.beginPath();g.moveTo(front?10:-6,-38);g.lineTo((front?10:-6)+sw*14,-14);g.lineTo((front?10:-6)+sw*20+6,4);g.stroke();
+    g.strokeStyle=front?shirt:shirt;g.lineWidth=9;g.beginPath();g.moveTo(front?10:-6,-38);g.lineTo((front?10:-6)+sw*14,-14);g.stroke();
+    g.fillStyle='#f1c9a4';g.strokeStyle='#2b2620';g.lineWidth=3;g.beginPath();g.arc((front?10:-6)+sw*20+6,4,6,0,7);g.fill();g.stroke();};
+  arm(legA,false);
+  g.fillStyle=shirt;g.strokeStyle='#2b2620';g.lineWidth=4;g.beginPath();g.roundRect(-24,-48,48,50,14);g.fill();g.stroke();
+  if(rival){g.fillStyle='#c0392b';g.fillRect(-24,-26,48,6);}
+  arm(legB,true);
   // 머리
-  g.fillStyle='#f1c9a4';g.beginPath();g.arc(0,-122,34,0,7);g.fill();g.stroke();
-  g.fillStyle=hair;g.beginPath();g.arc(0,-130,34,Math.PI*1.05,Math.PI*1.95);g.fill();
-  if(rival){g.fillStyle='#f3d36b';g.beginPath();g.ellipse(0,-150,36,10,0,0,7);g.fill();g.stroke();}
-  // 얼굴
+  g.translate(0,-76+breathe*0.4);
+  g.fillStyle='#f1c9a4';g.beginPath();g.arc(0,0,34,0,7);g.fill();g.stroke();
+  g.fillStyle=hair;g.beginPath();g.arc(0,-8,34,Math.PI*1.05,Math.PI*1.95);g.fill();
+  if(rival){g.fillStyle='#f3d36b';g.beginPath();g.ellipse(0,-28,36,10,0,0,7);g.fill();g.stroke();}
   g.fillStyle='#2b2620';
-  if(tired){g.lineWidth=3;g.beginPath();g.moveTo(-14,-124);g.lineTo(-6,-120);g.moveTo(14,-124);g.lineTo(6,-120);g.stroke();g.beginPath();g.ellipse(0,-104,6,8,0,0,7);g.fill();
-    g.fillStyle='#7cc6ea';g.beginPath();g.ellipse(30,-140,5,8,0,0,7);g.fill();}
-  else{g.beginPath();g.arc(-11,-122,4,0,7);g.arc(11,-122,4,0,7);g.fill();g.lineWidth=3;g.beginPath();g.arc(0,-110,8,0.2,Math.PI-0.2);g.stroke();}
-  // 이름표
-  g.font='700 20px "Noto Sans KR",sans-serif';g.textAlign='center';const tw=g.measureText(name).width+16;
-  g.fillStyle=rival?'#3c8a5a':'#e36b3c';g.beginPath();g.roundRect(-tw/2,-196,tw,28,8);g.fill();g.fillStyle='#fff';g.fillText(name,0,-175);
+  if(tired){g.lineWidth=3;g.beginPath();g.moveTo(-14,-2);g.lineTo(-6,2);g.moveTo(14,-2);g.lineTo(6,2);g.stroke();g.beginPath();g.ellipse(2,18,6,8+Math.sin(now*14)*2,0,0,7);g.fill();
+    g.fillStyle='#7cc6ea';g.beginPath();g.ellipse(30,-18+((now*40)%20),5,8,0,0,7);g.fill();}
+  else{const blink=(now%3.2)<0.1;g.beginPath();if(blink){g.lineWidth=3;g.moveTo(-15,0);g.lineTo(-7,0);g.moveTo(7,0);g.lineTo(15,0);g.stroke();}else{g.arc(-9,0,4,0,7);g.arc(13,0,4,0,7);g.fill();}
+    g.lineWidth=3;g.beginPath();g.arc(3,12,8,0.2,Math.PI-0.2);g.stroke();}
   g.restore();
+  // 이름표 (기울지 않게)
+  g.font='700 20px "Noto Sans KR",sans-serif';g.textAlign='center';const tw=g.measureText(name).width+16;
+  g.fillStyle=rival?'#3c8a5a':'#e36b3c';g.beginPath();g.roundRect(-tw/2,-206,tw,28,8);g.fill();g.fillStyle='#fff';g.fillText(name,0,-185);
+  g.textAlign='left';
+  g.restore();
+  // 발밑 먼지
+  if(land>0.06){g.fillStyle='rgba(180,160,130,.6)';g.beginPath();g.arc(x-18,y-4,7,0,7);g.arc(x+22,y-4,6,0,7);g.fill();}
 }
 function hud(){
   g.textAlign='left';
