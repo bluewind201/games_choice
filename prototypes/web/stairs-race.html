@@ -67,9 +67,9 @@ kbd{font:700 .8rem var(--f-body);border:2px solid var(--ink);border-bottom-width
 const cv=document.getElementById('cv'), g=cv.getContext('2d');
 const W=1280,H=720, STEPS=70, TIME=40;
 const DIFF={
-  1:{rival:3.6, breath:5.0, label:'1구간'},
-  3:{rival:4.7, breath:6.0, label:'3구간'},
-  5:{rival:5.6, breath:8.0, label:'5구간'},
+  1:{rival:3.6, breath:5.0, lo:55, hi:95, label:'1구간'},
+  3:{rival:4.7, breath:6.0, lo:62, hi:94, label:'3구간'},
+  5:{rival:6.8, breath:8.5, lo:72, hi:92, label:'5구간'},
 };
 let diff=3;
 const S={};
@@ -93,7 +93,7 @@ function press(k){
   if(S.gasp>0||S.stun>0){S.last=null;return;}
   if(k==='C'){
     const D=DIFF[diff];
-    if(S.breath>=62&&S.breath<=94){S.breath=Math.max(0,S.breath-55);S.boost=2;S.stun=0.3;say('좋은 호흡!');beep(660,.12,'sine',.08);puff(true);}
+    if(S.breath>=D.lo&&S.breath<=D.hi){S.breath=Math.max(0,S.breath-55);S.boost=2;S.stun=0.3;say('좋은 호흡!');beep(660,.12,'sine',.08);puff(true);}
     else{S.breath=Math.max(0,S.breath-15);S.stun=0.6;say(S.breath<40?'아직 괜찮은데…':'늦었다!');beep(220,.1,'sine');puff(false);}
     return;
   }
@@ -240,10 +240,10 @@ function hud(){
   panel(20,H-92,460,72);
   g.fillStyle='#2b2620';g.font='700 20px "Noto Sans KR",sans-serif';g.fillText('숨',40,H-48);
   const gx=80,gw=380,gy=H-66;g.fillStyle='#e7e1d4';g.beginPath();g.roundRect(gx,gy,gw,26,8);g.fill();
-  g.fillStyle='rgba(60,138,90,.28)';g.fillRect(gx+gw*0.62,gy,gw*0.32,26);
-  g.fillStyle=S.gasp>0?'#c0392b':S.breath>=62&&S.breath<=94?'#3c8a5a':S.breath>94?'#e8873a':'#7aa3c8';g.beginPath();g.roundRect(gx,gy,gw*S.breath/100,26,8);g.fill();
+  g.fillStyle='rgba(60,138,90,.28)';g.fillRect(gx+gw*DIFF[diff].lo/100,gy,gw*(DIFF[diff].hi-DIFF[diff].lo)/100,26);
+  g.fillStyle=S.gasp>0?'#c0392b':S.breath>=DIFF[diff].lo&&S.breath<=DIFF[diff].hi?'#3c8a5a':S.breath>94?'#e8873a':'#7aa3c8';g.beginPath();g.roundRect(gx,gy,gw*S.breath/100,26,8);g.fill();
   g.strokeStyle='#2b2620';g.lineWidth=3;g.beginPath();g.roundRect(gx,gy,gw,26,8);g.stroke();
-  g.fillStyle='#3c8a5a';g.font='700 14px "Noto Sans KR",sans-serif';g.fillText('심호흡 타이밍',gx+gw*0.64,gy-6);
+  g.fillStyle='#3c8a5a';g.font='700 14px "Noto Sans KR",sans-serif';g.fillText('심호흡 타이밍',gx+gw*DIFF[diff].lo/100+4,gy-6);
   if(S.boost>0){panel(500,H-92,190,72);g.fillStyle='#3c8a5a';g.font='700 22px "Noto Sans KR",sans-serif';g.fillText('발이 가벼워!',520,H-48);}
   // 메시지
   if(S.msgT>0&&S.msg){g.textAlign='center';g.font='700 54px "Gaegu","Noto Sans KR",sans-serif';g.lineWidth=8;g.strokeStyle='#fff';g.strokeText(S.msg,W/2,H*0.3);g.fillStyle='#2b2620';g.fillText(S.msg,W/2,H*0.3);g.textAlign='left';}
