@@ -229,11 +229,12 @@ function makeChar(gltf,color,z,name){
   const tex=new THREE.CanvasTexture(cv);tex.colorSpace=THREE.SRGBColorSpace;const sp=new THREE.Sprite(new THREE.SpriteMaterial({map:tex,depthTest:false}));sp.scale.set(0.5,0.125,1);sp.position.y=1.35;sp.renderOrder=10;holder.add(sp);
   c.play('Idle');return c;
 }
-new GLTFLoader().load('assets/robot-cc0.gltf.json',gltf=>{
+function loadModel(){return new Promise((res,rej)=>{const sc=document.createElement('script');sc.src='assets/robot-cc0.js';sc.onload=()=>{try{const bin=atob(window.ROBOT_GLB_B64);const u=new Uint8Array(bin.length);for(let i=0;i<bin.length;i++)u[i]=bin.charCodeAt(i);new GLTFLoader().parse(u.buffer,'',res,rej);}catch(e){rej(e);}};sc.onerror=rej;document.head.appendChild(sc);});}
+loadModel().then(gltf=>{
   chars.p=makeChar(gltf,0xe36b3c,0.45,'나');
   chars.r=makeChar(gltf,0x3c8a5a,-0.45,'아저씨');
   window.__chars=chars;$("load").remove();reset();
-},undefined,e=>{$('load').textContent='모델을 불러오지 못했어요';});
+}).catch(e=>{console.error(e);$('load').textContent='모델을 불러오지 못했어요: '+(e&&e.message||e);});
 
 function placeChar(c,pv,lag){
   const f=pv%1, moving=lag>0.03;
