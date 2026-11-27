@@ -23,4 +23,4 @@ Google Flow(Nano Banana 2.1, ULTRA 계정)로 만든 그림 시안입니다. 원
 | 15 | NPC 4: 민트, 혹부리 할아버지, 강철 대원, 수상한 등산객, 산신령 | |
 
 ## 3D 시험판 모델
-`prototypes/web/assets/robot-cc0.glb`: RobotExpressive, Tomás Laulhé(Quaternius) 제작, CC0 1.0, three.js 예제 저장소 수정본(Don McCurdy). 동작 확인용 임시 모델입니다.
+`prototypes/web/assets/robot-cc0.gltf.json`: RobotExpressive, Tomás Laulhé(Quaternius) 제작, CC0 1.0, three.js 예제 저장소 수정본(Don McCurdy). 동작 확인용 임시 모델입니다.
