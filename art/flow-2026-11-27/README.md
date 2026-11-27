@@ -21,3 +21,6 @@ Google Flow(Nano Banana 2.1, ULTRA 계정)로 만든 그림 시안입니다. 원
 | 13 | NPC 2: 덕만 씨, 순자 할머니, 다람쥐 도토, 미경 씨, 봉순 이모 | |
 | 14 | NPC 3: 준표, 오누이, 강 부장님, 나그네, 콩쥐 사장님 | |
 | 15 | NPC 4: 민트, 혹부리 할아버지, 강철 대원, 수상한 등산객, 산신령 | |
+
+## 3D 시험판 모델
+`prototypes/web/assets/robot-cc0.glb`: RobotExpressive, Tomás Laulhé(Quaternius) 제작, CC0 1.0, three.js 예제 저장소 수정본(Don McCurdy). 동작 확인용 임시 모델입니다.
