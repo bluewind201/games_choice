@@ -209,7 +209,7 @@ const rnd=(()=>{let s=7;return()=>(s=(s*16807)%2147483647)/2147483647;})();
 const leafCols=[0xe36b3c,0xf2a33a,0xc9472b,0xe8873a,0xd9502e,0x6f9a4a,0x4f7a3a];
 const trunkMat=envM(0x6b4a33);
 const treeGroup=new THREE.Group();scene.add(treeGroup);
-for(let n=0;n<170;n++){
+for(let n=0;n<60;n++){
   const x=-12+rnd()*(STEPS*RUN+30), side=rnd()<0.5?-1:1, z=side*(2+rnd()*14);
   if(z>0&&z<9)continue; // 카메라 앞은 비워 두기
   const y=groundY(x)+0.1;const s=0.7+rnd()*0.9;const t=new THREE.Group();
@@ -251,6 +251,66 @@ const mists=[];for(let n=0;n<10;n++){const m=new THREE.Mesh(new THREE.PlaneGeome
 
 // ---------- 캐릭터 (웹툰 A 디자인을 3D로 옮긴 임시 모델) ----------
 const SKIN=0xf3cfae, INK=0x2b2620;
+// ---------- 설악산 디오라마 소품 ----------
+// 땅: 풀색 얼룩 (정점 색)
+{const g=ground.geometry,pos=g.attributes.position,cols=[];const A=new THREE.Color(0x6f8f48),B=new THREE.Color(0x8a8a4a),C=new THREE.Color(0x5a7a3e),D=new THREE.Color(0xa0703a),t=new THREE.Color();
+ for(let i=0;i<pos.count;i++){const x=pos.getX(i),y=pos.getY(i);const n=Math.sin(x*1.7+y*0.6)*0.5+Math.sin(x*0.4-y*1.3)*0.5;t.copy(A).lerp(n>0?B:C,Math.abs(n)*0.8);if(Math.sin(x*3.1)*Math.cos(y*2.3)>0.75)t.lerp(D,0.5);cols.push(t.r,t.g,t.b);}
+ g.setAttribute('color',new THREE.Float32BufferAttribute(cols,3));groundMat.vertexColors=true;groundMat.color.set(0xffffff);}
+const dummy=new THREE.Object3D();
+function scatter(geo,mat,n,place){const im=new THREE.InstancedMesh(geo,mat,n);for(let i=0;i<n;i++){place(dummy,i);dummy.updateMatrix();im.setMatrixAt(i,dummy.matrix);}im.castShadow=im.receiveShadow=true;scene.add(im);return im;}
+const sideZ=()=>{const sgn=rnd()<0.55?-1:1;return sgn<0?-(1.35+rnd()*6):(1.35+rnd()*3.5);};
+// 풀숲
+const tuftGeo=new THREE.ConeGeometry(0.07,0.22,4);tuftGeo.translate(0,0.11,0);
+scatter(tuftGeo,new THREE.MeshStandardMaterial({color:0x6d9a40,roughness:1}),600,(o)=>{const x=-6+rnd()*(STEPS*RUN+10),z=sideZ();o.position.set(x,groundY(x)+0.01,z);o.rotation.set((rnd()-.5)*0.4,rnd()*3,(rnd()-.5)*0.4);const k=0.35+rnd()*0.6;o.scale.set(k,k*(0.8+rnd()*0.6),k);});
+// 떨어진 단풍잎
+const leafG=new THREE.PlaneGeometry(0.07,0.07);leafG.rotateX(-Math.PI/2);
+const leafCol=[0xd9502e,0xf2a33a,0xc9472b,0xe8873a];
+for(const c of leafCol)scatter(leafG,new THREE.MeshStandardMaterial({color:c,roughness:1,side:THREE.DoubleSide}),500,(o)=>{const x=-6+rnd()*(STEPS*RUN+10),z=(rnd()-.5)*12;const onStep=Math.abs(z)<1.2;const i=Math.floor(x/RUN);o.position.set(x,onStep?Math.max(0,i)*RISE+0.035:groundY(x)+0.02,z);o.rotation.set(0,rnd()*6,0);});
+// 작은 돌
+const pebG=new THREE.DodecahedronGeometry(0.08,0);
+scatter(pebG,envM(0xa59d90),260,(o)=>{const x=-6+rnd()*(STEPS*RUN+10),z=sideZ();o.position.set(x,groundY(x)+0.02,z);o.rotation.set(rnd()*3,rnd()*3,rnd()*3);const k=0.5+rnd()*1.4;o.scale.set(k,k*0.6,k);});
+// 계단 옆 화강암 바위 (설악산 느낌의 둥근 화강암 덩어리)
+function boulder(x,z,k){const geo=new THREE.IcosahedronGeometry(0.5,3);const p=geo.attributes.position;for(let i=0;i<p.count;i++){p.setXYZ(i,p.getX(i)*(0.8+rnd()*0.35),p.getY(i)*(0.65+rnd()*0.3),p.getZ(i)*(0.8+rnd()*0.35));}geo.computeVertexNormals();
+ const m=new THREE.Mesh(geo,envM(rnd()<0.5?0xc9c1b2:0xb4ac9c,1));m.scale.setScalar(k);m.position.set(x,groundY(x)+k*0.15,z);m.rotation.y=rnd()*3;m.castShadow=m.receiveShadow=true;scene.add(m);
+ const mossM=new THREE.Mesh(new THREE.SphereGeometry(0.22*k,8,6,0,Math.PI*2,0,Math.PI/2),new THREE.MeshStandardMaterial({color:0x5f8a3a,roughness:1}));mossM.position.set(x+(rnd()-.5)*0.2*k,m.position.y+k*0.2,z);mossM.scale.y=0.35;scene.add(mossM);}
+for(let n=0;n<30;n++){const x=-5+rnd()*(STEPS*RUN+8);const back=rnd()<0.75;const z=back?-(1.9+rnd()*5):(1.7+rnd()*1.2);boulder(x,z,back?0.6+rnd()*1.3:0.3+rnd()*0.4);}
+// 풍성한 단풍나무 (잎 덩어리 여러 개, 색 섞기)
+function maple(x,z,s){const g=new THREE.Group();const tr=new THREE.Mesh(new THREE.CylinderGeometry(0.05*s,0.09*s,1.2*s,6),envM(0x5a3c28));tr.position.y=0.6*s;g.add(tr);
+ const base=[0xd9502e,0xe8873a,0xc9472b,0xf2a33a,0xb83a22][Math.floor(rnd()*5)];
+ for(let k=0;k<9;k++){const c=new THREE.Color(base).offsetHSL((rnd()-.5)*0.05,0,(rnd()-.5)*0.12);const b=new THREE.Mesh(new THREE.IcosahedronGeometry((0.28+rnd()*0.2)*s,1),new THREE.MeshStandardMaterial({color:c,roughness:0.85,flatShading:true}));b.position.set((rnd()-.5)*0.9*s,(1.2+rnd()*0.7)*s,(rnd()-.5)*0.9*s);g.add(b);}
+ g.position.set(x,groundY(x),z);g.traverse(o=>{if(o.isMesh)o.castShadow=true;});scene.add(g);}
+function pine(x,z,s){const g=new THREE.Group();const tr=new THREE.Mesh(new THREE.CylinderGeometry(0.05*s,0.08*s,1.0*s,6),envM(0x4a3324));tr.position.y=0.5*s;g.add(tr);
+ for(let k=0;k<4;k++){const c=new THREE.Mesh(new THREE.ConeGeometry((0.62-k*0.13)*s,0.7*s,8),new THREE.MeshStandardMaterial({color:new THREE.Color(0x3f6a3a).offsetHSL(0,0,(rnd()-.5)*0.08),roughness:0.9,flatShading:true}));c.position.y=(0.9+k*0.38)*s;g.add(c);}
+ g.position.set(x,groundY(x),z);g.traverse(o=>{if(o.isMesh)o.castShadow=true;});scene.add(g);}
+for(let n=0;n<70;n++){const x=-6+rnd()*(STEPS*RUN+10);const z=-(2.4+rnd()*9);if(x>11&&x<23&&z>-8)continue;(rnd()<0.65?maple:pine)(x,z,0.8+rnd()*0.7);}
+// 중간 쉼터 산장
+{const L=new THREE.Group();const wood=envM(0x7a5236),dark=envM(0x4e3424),roof=envM(0x6b3a2a),stone=envM(0xa89f90);
+ const base=new THREE.Mesh(new THREE.BoxGeometry(2.6,0.3,1.8),stone);base.position.y=0.15;L.add(base);
+ const wall=new THREE.Mesh(new THREE.BoxGeometry(2.4,1.2,1.6),wood);wall.position.y=0.9;L.add(wall);
+ for(let k=0;k<5;k++){const log=new THREE.Mesh(new THREE.BoxGeometry(2.46,0.04,1.66),dark);log.position.y=0.4+k*0.25;L.add(log);}
+ const rg=new THREE.CylinderGeometry(0.01,1.25,0.8,4,1);rg.rotateY(Math.PI/4);const r=new THREE.Mesh(rg,roof);r.scale.set(1.55,1,1.0);r.position.y=1.9;L.add(r);
+ const win=new THREE.MeshStandardMaterial({color:0xffc070,emissive:0xff9a40,emissiveIntensity:2.2});
+ for(const dx of [-0.6,0.6]){const w=new THREE.Mesh(new THREE.BoxGeometry(0.42,0.36,0.02),win);w.position.set(dx,1.0,0.81);L.add(w);}
+ const door=new THREE.Mesh(new THREE.BoxGeometry(0.4,0.7,0.02),dark);door.position.set(0,0.65,0.81);L.add(door);
+ const lamp=new THREE.PointLight(0xffa050,3,4,1.5);lamp.position.set(0,1.1,1.3);L.add(lamp);
+ // 간판
+ const cv=document.createElement('canvas');cv.width=256;cv.height=64;const x=cv.getContext('2d');x.fillStyle='#5a3a24';x.fillRect(0,0,256,64);x.strokeStyle='#e8c890';x.lineWidth=4;x.strokeRect(4,4,248,56);x.fillStyle='#ffe2a8';x.font='700 34px "Noto Sans KR",sans-serif';x.textAlign='center';x.fillText('흔들바위 산장',128,44);
+ const st=new THREE.CanvasTexture(cv);st.colorSpace=THREE.SRGBColorSpace;const sign=new THREE.Mesh(new THREE.PlaneGeometry(1.1,0.28),new THREE.MeshStandardMaterial({map:st,roughness:0.9}));sign.position.set(0,1.52,0.82);L.add(sign);
+ const bench=new THREE.Mesh(new THREE.BoxGeometry(0.9,0.08,0.3),wood);bench.position.set(1.7,0.42,0.9);L.add(bench);
+ const sx=34*RUN+RUN/2;L.position.set(sx-0.6,groundY(sx),-3.1);L.rotation.y=0.12;L.traverse(o=>{if(o.isMesh){o.castShadow=true;o.receiveShadow=true;}});scene.add(L);}
+// 뒤쪽 계곡 흔들다리
+{const B=new THREE.Group();const rope=new THREE.MeshStandardMaterial({color:0x6b5a44,roughness:1}),plank=envM(0x8a6a48);
+ const span=7,sag=0.7,N=28;
+ for(let i=0;i<N;i++){const u=i/(N-1),x=(u-0.5)*span,y=-sag*(1-(2*u-1)**2);const p=new THREE.Mesh(new THREE.BoxGeometry(span/N*0.8,0.04,0.7),plank);p.position.set(x,y,0);B.add(p);}
+ for(const dz of [-0.38,0.38]){const pts=[];for(let i=0;i<=20;i++){const u=i/20;pts.push(new THREE.Vector3((u-0.5)*span,-sag*(1-(2*u-1)**2)+0.55,dz));}
+  const tube=new THREE.Mesh(new THREE.TubeGeometry(new THREE.CatmullRomCurve3(pts),40,0.02,5),rope);B.add(tube);}
+ for(const dx of [-span/2,span/2])for(const dz of [-0.38,0.38]){const post=new THREE.Mesh(new THREE.CylinderGeometry(0.05,0.06,1.2,6),plank);post.position.set(dx,0.1,dz);B.add(post);}
+ const bx=17,bz=-5.5;const c1=crag(0,0,5,2.6),c2=crag(0,0,6,2.8);const by=groundY(bx)+2.2;c1.position.set(bx-span/2-1.0,by-4.6,bz);c2.position.set(bx+span/2+1.0,by-5.2,bz);scene.add(c1,c2);
+ B.position.set(bx,by,bz);B.traverse(o=>{if(o.isMesh)o.castShadow=true;});scene.add(B);}
+// 먼 능선 실루엣 (겹겹이, 안개 색으로 흐려짐)
+for(let l=0;l<4;l++){const shape=new THREE.Shape();const W=120,base=-10;shape.moveTo(-40,base);for(let i=0;i<=60;i++){const x=-40+i*W/60;const h=6+l*3+Math.sin(i*0.7+l)*2.5+Math.sin(i*0.23+l*2)*4+(rnd()-.5)*2.2;shape.lineTo(x,h);}shape.lineTo(-40+W,base);
+ const m=new THREE.Mesh(new THREE.ShapeGeometry(shape),new THREE.MeshBasicMaterial({color:new THREE.Color(0x6a6f8a).lerp(new THREE.Color(0xe8c49a),0.25+l*0.18),fog:false}));m.position.set(0,l*2.5,-60+l*8);scene.add(m);}
+
 // 석등과 단풍잎 (HD-2D 분위기)
 const lanterns=[];{const st=envM(0xb9b0a0);const flame=new THREE.MeshBasicMaterial({color:0xffb050});
  for(let i=4;i<=STEPS;i+=9){const p=stepPos(i);const g=new THREE.Group();
@@ -388,7 +448,7 @@ function updateChars(dt){
   for(const m of mists)m.position.x+=dt*0.15;
   const tgt=stepPos(Math.max(S.pv,0)).add(new THREE.Vector3(0.9,0.55,0));
   camT.lerp(tgt,Math.min(1,dt*4));
-  camera.position.set(camT.x-1.0,camT.y+3.6,camT.z+7.4);camera.lookAt(camT.x+1.0,camT.y+0.4,0);
+  camera.position.set(camT.x-1.0,camT.y+2.9,camT.z+7.6);camera.lookAt(camT.x+1.0,camT.y+0.8,-1);
   sun.position.set(camT.x-6,camT.y+12,8);sun.target.position.copy(camT);
 }
 
