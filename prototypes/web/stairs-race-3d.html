@@ -15,6 +15,7 @@ h1{margin:0;font-family:var(--f-hand);font-size:2rem;line-height:1.1}
 .sub{margin:2px 0 0;color:var(--muted);font-size:.9rem}
 .screen{position:relative;border:3px solid var(--ink);border-radius:14px;overflow:hidden;background:#cfe3ea;aspect-ratio:16/9}
 .screen canvas{display:block;width:100%!important;height:100%!important}
+.screen.pix canvas{image-rendering:pixelated}
 .hud{position:absolute;inset:0;pointer-events:none;font-weight:700}
 .chip{position:absolute;background:rgba(251,250,245,.92);border:3px solid var(--ink);border-radius:12px;padding:6px 12px}
 #lives{left:12px;top:12px;color:#e8453c;letter-spacing:2px}
@@ -49,7 +50,7 @@ kbd{font:700 .8rem var(--f-body);border:2px solid var(--ink);border-bottom-width
   <div class="row">
     <div>
       <h1>계단 오르기 경주 3D</h1>
-      <p class="sub">3D 화면 시험판 · 규칙과 난이도는 2D 판과 같아요. 캐릭터는 웹툰 시안을 바탕으로 코드로 만든 임시 3D 모델이에요.</p>
+      <p class="sub">3D 화면 시험판 · 규칙과 난이도는 2D 판과 같아요. 캐릭터는 웹툰 시안을 바탕으로 코드로 만든 임시 3D 모델이에요. 화면 스타일 버튼으로 툰 3D, 3D 도트, 복셀 느낌을 비교해 보세요.</p>
     </div>
     <div class="diff" role="group" aria-label="난이도">
       <button id="d1" aria-pressed="false">1구간 쉬움</button>
@@ -59,6 +60,11 @@ kbd{font:700 .8rem var(--f-body);border:2px solid var(--ink);border-bottom-width
     <div class="diff" role="group" aria-label="주인공">
       <button id="hm" aria-pressed="true">남자 주인공</button>
       <button id="hf" aria-pressed="false">여자 주인공</button>
+    </div>
+    <div class="diff" role="group" aria-label="화면 스타일">
+      <button id="sT" aria-pressed="true">툰 3D</button>
+      <button id="sP" aria-pressed="false">3D 도트</button>
+      <button id="sV" aria-pressed="false">복셀</button>
     </div>
   </div>
   <div class="screen" id="screen">
@@ -86,6 +92,7 @@ kbd{font:700 .8rem var(--f-body);border:2px solid var(--ink);border-bottom-width
 <script type="module">
 import * as THREE from 'three';
 import {OutlineEffect} from 'three/addons/effects/OutlineEffect.js';
+import {MeshSurfaceSampler} from 'three/addons/math/MeshSurfaceSampler.js';
 
 // ---------- 규칙 (2D 판과 동일) ----------
 const STEPS=70, TIME=40;
@@ -319,14 +326,38 @@ function pose(c,st,t,ph,amt){ // st: idle|walk|run|gasp|win|lose  ph: 걸음 위
   P.face.open.visible=mouthOpen;P.face.mouth.visible=!mouthOpen;
   const blink=(t%3.1)<0.1;for(const e of P.face.eyes)e.scale.y=blink?0.15:1.15;
 }
-const chars={};let hero='m';
+const chars={};let hero='m',style='toon';
+// 복셀: 각 부위 메시의 겉면을 작은 정육면체로 바꾼다 (부위별로 따로 만들어 동작은 그대로)
+const UNIT=new THREE.BoxGeometry(1,1,1),HIDE=new THREE.MeshBasicMaterial({visible:false});
+function voxelize(root,s=0.05){
+  root.updateMatrixWorld(true);const meshes=[];root.traverse(o=>{if(o.isMesh&&!o.isInstancedMesh)meshes.push(o)});
+  const ws=new THREE.Vector3(),p=new THREE.Vector3(),m4=new THREE.Matrix4(),q=new THREE.Quaternion();
+  for(const m of meshes){
+    if(m.material.transparent&&m.material.opacity===0)continue;
+    m.getWorldScale(ws);const st=new THREE.Vector3(s/Math.abs(ws.x),s/Math.abs(ws.y),s/Math.abs(ws.z));
+    const g=m.geometry.index?m.geometry.toNonIndexed():m.geometry;g.computeBoundingBox();
+    const sz=new THREE.Vector3();g.boundingBox.getSize(sz);
+    const area=2*(sz.x/st.x*sz.y/st.y+sz.y/st.y*sz.z/st.z+sz.x/st.x*sz.z/st.z);
+    const n=Math.max(30,Math.min(20000,Math.round(area*14)));
+    const sm=new MeshSurfaceSampler(new THREE.Mesh(g)).build();const keys=new Set();
+    for(let i=0;i<n;i++){sm.sample(p);keys.add(Math.round(p.x/st.x)+','+Math.round(p.y/st.y)+','+Math.round(p.z/st.z));}
+    const mat=m.material.clone();mat.userData.outlineParameters={visible:false};
+    const inst=new THREE.InstancedMesh(UNIT,mat,keys.size);let i=0;
+    for(const k of keys){const [a,b,c]=k.split(',').map(Number);m4.compose(p.set(a*st.x,b*st.y,c*st.z),q,st);inst.setMatrixAt(i++,m4);}
+    inst.castShadow=true;m.add(inst);m.material=HIDE;m.castShadow=false;}
+}
+function applyStyle(){
+  screen.classList.toggle('pix',style==='pixel');
+  renderer.setPixelRatio(style==='pixel'?0.3:Math.min(2,devicePixelRatio));resize();
+  effect.enabled=style!=='voxel';}
 function spawn(){for(const k of ['p','r'])if(chars[k])scene.remove(chars[k].holder);
   for(const [key,kind,z,name,col] of [['p',hero,0.45,'나','#e36b3c'],['r','u',-0.45,'아저씨','#3c8a5a']]){
-    const c=makeHero(kind);c.root.rotation.y=-0.6;const holder=new THREE.Group();holder.add(c.root);holder.position.z=z;scene.add(holder);c.holder=holder;
+    const c=makeHero(kind);if(style==='voxel')voxelize(c.root);c.root.rotation.y=-0.6;const holder=new THREE.Group();holder.add(c.root);holder.position.z=z;scene.add(holder);c.holder=holder;
     const cv=document.createElement('canvas');cv.width=256;cv.height=64;const x=cv.getContext('2d');x.fillStyle=col;x.beginPath();x.roundRect(4,4,248,56,16);x.fill();x.fillStyle='#fff';x.font='700 36px "Noto Sans KR",sans-serif';x.textAlign='center';x.fillText(name,128,46);
     const tex=new THREE.CanvasTexture(cv);tex.colorSpace=THREE.SRGBColorSpace;const sp=new THREE.Sprite(new THREE.SpriteMaterial({map:tex,depthTest:false}));sp.scale.set(0.5,0.125,1);sp.position.y=kind==='u'?1.75:1.55;sp.renderOrder=10;holder.add(sp);
     chars[key]=c;}}
 spawn();window.__chars=chars;$('load').remove();
+[['sT','toon'],['sP','pixel'],['sV','voxel']].forEach(([id,v])=>document.getElementById(id).onclick=()=>{const was=style;style=v;['sT','sP','sV'].forEach(m=>document.getElementById(m).setAttribute('aria-pressed',String(m===id)));if((was==='voxel')!==(v==='voxel'))spawn();applyStyle();document.getElementById(id).blur();});
 [['hm','m'],['hf','f']].forEach(([id,h])=>document.getElementById(id).onclick=()=>{hero=h;['hm','hf'].forEach(m=>document.getElementById(m).setAttribute('aria-pressed',String(m===id)));spawn();document.getElementById(id).blur();});
 
 function placeChar(c,pv,lag){
@@ -367,6 +398,6 @@ function update(dt){
 function resize(){const w=screen.clientWidth,h=screen.clientHeight;renderer.setSize(w,h,false);camera.aspect=w/h;camera.updateProjectionMatrix();}
 new ResizeObserver(resize).observe(screen);resize();
 const clock=new THREE.Clock();
-function loop(){const dt=Math.min(0.05,clock.getDelta());update(dt);updateChars(dt);hud();effect.render(scene,camera);requestAnimationFrame(loop);}
+function loop(){const dt=Math.min(0.05,clock.getDelta());update(dt);updateChars(dt);hud();if(effect.enabled===false)renderer.render(scene,camera);else effect.render(scene,camera);requestAnimationFrame(loop);}
 reset();loop();
 </script>
