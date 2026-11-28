@@ -50,7 +50,7 @@ kbd{font:700 .8rem var(--f-body);border:2px solid var(--ink);border-bottom-width
   <div class="row">
     <div>
       <h1>계단 오르기 경주 HD-2D</h1>
-      <p class="sub">HD-2D 시험판 · 도트 캐릭터 + 조명 있는 3D 디오라마 배경. 캐릭터 도트는 코드로 만든 임시 모델을 작게 그려 만든 거예요.</p>
+      <p class="sub">HD-2D 시험판 · 도트 캐릭터 + 조명 있는 3D 디오라마 배경. 캐릭터 도트는 웹툰 시안을 바탕으로 Flow로 뽑은 스프라이트예요.</p>
     </div>
     <div class="diff" role="group" aria-label="난이도">
       <button id="d1" aria-pressed="false">1구간 쉬움</button>
@@ -349,15 +349,19 @@ function pose(c,st,t,ph,amt){ // st: idle|walk|run|gasp|win|lose  ph: 걸음 위
 }
 const chars={};let hero='m';
 
+const pxCache={};function pxTex(k){if(!pxCache[k]){const t=new THREE.TextureLoader().load('assets/px-'+k+'.png',()=>{for(const c of Object.values(chars))if(c&&c.kind===k){c.tex.image=t.image;c.tex.needsUpdate=true;}});t.magFilter=t.minFilter=THREE.NearestFilter;t.generateMipmaps=false;t.colorSpace=THREE.SRGBColorSpace;pxCache[k]=t;}return pxCache[k];}
+function setFrame(c,st,t,ph){let f=0;
+  if(st==='walk'||st==='run')f=1+(Math.floor(ph/Math.PI*2)%4+4)%4;
+  else if(st==='gasp')f=5;else if(st==='win')f=6;else if(st==='lose')f=7;
+  else f=Math.floor(t*1.5)%6===0&&c.kind==='u'?5:0;
+  c.tex.offset.x=f/8;}
 function spawn(){for(const k of ['p','r'])if(chars[k])scene.remove(chars[k].holder);
   for(const [key,kind,z,name,col] of [['p',hero,0.45,'나','#e36b3c'],['r','u',-0.45,'아저씨','#3c8a5a']]){
-    const c=makeHero(kind);c.root.rotation.y=-0.9;
-    // 캐릭터 전용 장면을 작은 해상도로 그려 도트 스프라이트로 쓴다
-    const PW=44,PH=60;const rt=new THREE.WebGLRenderTarget(PW,PH,{minFilter:THREE.NearestFilter,magFilter:THREE.NearestFilter});rt.texture.colorSpace=THREE.SRGBColorSpace;
-    const cs=new THREE.Scene();cs.add(new THREE.HemisphereLight(0xfff0dd,0x7a6a6a,2.0));const cl=new THREE.DirectionalLight(0xffe0b0,2.4);cl.position.set(-2,4,4);cs.add(cl);cs.add(c.root);
-    const H=1.95,W=H*PW/PH;const cc=new THREE.OrthographicCamera(-W/2,W/2,H/2,-H/2,0.1,20);cc.position.set(0,H/2+0.7,6);cc.lookAt(0,H/2-0.02,0);
-    c.rt=rt;c.cs=cs;c.cc=cc;
-    const sprite=new THREE.Sprite(new THREE.SpriteMaterial({map:rt.texture,transparent:true,alphaTest:0.5,fog:false}));sprite.center.set(0.5,0.02);sprite.scale.set(W*0.95,H*0.95,1);
+    // 도트 스프라이트 시트 (8칸: 서기, 걷기 1~4, 숨차기/웃기, 승리, 패배)
+    const SZ={m:[90,158],f:[88,160],u:[94,165]}[kind];const ptex=pxTex(kind);
+    const c={kind,frame:0,tex:ptex.clone()};c.tex.needsUpdate=true;c.tex.repeat.set(1/8,1);
+    const PX=1.45/160;const sprite=new THREE.Sprite(new THREE.SpriteMaterial({map:c.tex,transparent:true,alphaTest:0.5,fog:false}));
+    sprite.center.set(0.5,0.01);sprite.scale.set(SZ[0]*PX,SZ[1]*PX,1);c.sprite=sprite;
     const holder=new THREE.Group();holder.add(sprite);holder.position.z=z;scene.add(holder);c.holder=holder;
     const blob=new THREE.Mesh(new THREE.CircleGeometry(0.28,20),new THREE.MeshBasicMaterial({color:0x2a1a10,transparent:true,opacity:0.35,depthWrite:false}));blob.rotation.x=-Math.PI/2;blob.position.y=0.03;blob.scale.y=0.6;holder.add(blob);
     const cv=document.createElement('canvas');cv.width=256;cv.height=64;const x=cv.getContext('2d');x.fillStyle=col;x.beginPath();x.roundRect(4,4,248,56,16);x.fill();x.fillStyle='#fff';x.font='700 36px "Noto Sans KR",sans-serif';x.textAlign='center';x.fillText(name,128,46);
@@ -380,7 +384,7 @@ function updateChars(dt){
   else if(S.state==='play'){
     if(S.gasp>0)ps='gasp';else if(S.stun>0)ps='idle';else if(S.t-S.lastStep<0.45)ps=S.pRate>4.5?'run':'walk';
     rs=S.rPause>0?'idle':(DIFF[diff].rival>5?'run':'walk');}
-  pose(p,ps,t,S.pv*Math.PI,k);pose(r,rs,t,S.rv*Math.PI,k);
+  setFrame(p,ps,t,S.pv*Math.PI);setFrame(r,rs,t,S.rv*Math.PI);
   for(const m of mists)m.position.x+=dt*0.15;
   const tgt=stepPos(Math.max(S.pv,0)).add(new THREE.Vector3(0.9,0.55,0));
   camT.lerp(tgt,Math.min(1,dt*4));
@@ -410,7 +414,6 @@ function sizeFX(){const w=screen.clientWidth,h=screen.clientHeight;composer.setS
 new ResizeObserver(sizeFX).observe(screen);sizeFX();
 const clock=new THREE.Clock();let T=0;
 function loop(){const dt=Math.min(0.05,clock.getDelta());update(dt);updateChars(dt);hud();T+=dt;updateLeaves(dt,T);for(const L of lanterns)L.intensity=2.0+Math.sin(T*9+L.id)*0.25;
-  for(const k of ['p','r']){const c=chars[k];if(!c)continue;renderer.setRenderTarget(c.rt);renderer.setClearColor(0x000000,0);renderer.clear();effect.render(c.cs,c.cc);}
-  renderer.setRenderTarget(null);composer.render();requestAnimationFrame(loop);}
+composer.render();requestAnimationFrame(loop);}
 reset();loop();
 </script>
