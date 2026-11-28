@@ -61,6 +61,11 @@ kbd{font:700 .8rem var(--f-body);border:2px solid var(--ink);border-bottom-width
       <button id="hm" aria-pressed="true">남자 주인공</button>
       <button id="hf" aria-pressed="false">여자 주인공</button>
     </div>
+    <div class="diff" role="group" aria-label="흐림 효과">
+      <button id="b0" aria-pressed="true">흐림 끔</button>
+      <button id="b1" aria-pressed="false">먼 배경만 살짝</button>
+      <button id="b2" aria-pressed="false">미니어처 흐림</button>
+    </div>
   </div>
   <div class="screen" id="screen">
     <div class="hud">
@@ -470,7 +475,9 @@ new ResizeObserver(resize).observe(screen);resize();
 const composer=new EffectComposer(renderer);composer.addPass(new RenderPass(scene,camera));
 const bloom=new UnrealBloomPass(new THREE.Vector2(512,512),0.45,0.6,0.82);composer.addPass(bloom);
 const hT=new ShaderPass(HorizontalTiltShiftShader),vT=new ShaderPass(VerticalTiltShiftShader);composer.addPass(hT);composer.addPass(vT);composer.addPass(new OutputPass());
-function sizeFX(){const w=screen.clientWidth,h=screen.clientHeight;composer.setSize(w,h);hT.uniforms.h.value=2.2/w;vT.uniforms.v.value=2.2/h;hT.uniforms.r.value=vT.uniforms.r.value=0.5;}
+let blurMode=0;const BL=[[0,0.5],[0.9,0.62],[2.2,0.5]];
+function sizeFX(){const w=screen.clientWidth,h=screen.clientHeight;composer.setSize(w,h);const [k,r]=BL[blurMode];hT.enabled=vT.enabled=k>0;hT.uniforms.h.value=k/w;vT.uniforms.v.value=k/h;hT.uniforms.r.value=vT.uniforms.r.value=r;}
+['b0','b1','b2'].forEach((id,i)=>document.getElementById(id).onclick=()=>{blurMode=i;['b0','b1','b2'].forEach(m=>document.getElementById(m).setAttribute('aria-pressed',String(m===id)));sizeFX();document.getElementById(id).blur();});
 new ResizeObserver(sizeFX).observe(screen);sizeFX();
 const clock=new THREE.Clock();let T=0;
 function loop(){const dt=Math.min(0.05,clock.getDelta());update(dt);updateChars(dt);hud();T+=dt;updateLeaves(dt,T);for(const L of lanterns)L.intensity=2.0+Math.sin(T*9+L.id)*0.25;
